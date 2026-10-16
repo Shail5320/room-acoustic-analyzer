@@ -139,6 +139,7 @@ def run_phase0b():
             "recovered_rt60": round(float(res["rt60"]), 4),
             "error_pct": round(float(err_pct), 2),
             "used_metric": res["used"],
+            "tier": res["tier"],
             "valid": res["valid"],
             "r2": round(float(res["r2"]), 4),
             "t20": round(float(res["t20"]), 4),
@@ -179,6 +180,7 @@ def run_phase0b():
             "recovered_rt60": round(float(res["rt60"]), 4),
             "error_pct": round(float(err_pct), 2),
             "used_metric": res["used"],
+            "tier": res["tier"],
             "valid": res["valid"],
             "r2": round(float(res["r2"]), 4),
             "t20": round(float(res["t20"]), 4),
@@ -239,7 +241,9 @@ def run_phase0b():
                 "t30": round(float(res_raw["t30"]), 4),
                 "bias_t30": round(float(bias_raw_t30), 4),
                 "r2_t30": round(float(res_raw["r2_t30"]), 4),
-                "used_metric": res_raw["used"]
+                "used_metric": res_raw["used"],
+                "tier": res_raw["tier"],
+                "valid": res_raw["valid"]
             },
             "simplified_noise_floor_truncation": {
                 "t20": round(float(res_trunc["t20"]), 4),
@@ -248,7 +252,9 @@ def run_phase0b():
                 "t30": round(float(res_trunc["t30"]), 4),
                 "bias_t30": round(float(bias_trunc_t30), 4),
                 "r2_t30": round(float(res_trunc["r2_t30"]), 4),
-                "used_metric": res_trunc["used"]
+                "used_metric": res_trunc["used"],
+                "tier": res_trunc["tier"],
+                "valid": res_trunc["valid"]
             }
         }
 
@@ -262,11 +268,12 @@ def run_phase0b():
         try:
             with open(json_path, "r", encoding="utf-8") as f:
                 existing = json.load(f)
-                for k in ["noise_test_dr", "monte_carlo_stats"]:
-                    if k in existing and k not in output_data:
-                        output_data[k] = existing[k]
-        except Exception:
-            pass
+            existing["single_rt60_recovery"] = output_data["single_rt60_recovery"]
+            existing["multi_rt60_recovery"] = output_data["multi_rt60_recovery"]
+            existing["noise_test"] = output_data["noise_test"]
+            output_data = existing
+        except Exception as e:
+            print(f"Warning: could not load existing {json_path}: {e}")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2)
 

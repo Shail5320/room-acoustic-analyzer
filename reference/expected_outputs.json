@@ -517,6 +517,7 @@
       "recovered_rt60": 0.7314,
       "error_pct": -8.58,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9902,
       "t20": 0.7532,
@@ -532,6 +533,7 @@
       "recovered_rt60": 0.7852,
       "error_pct": -1.85,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9964,
       "t20": 0.8296,
@@ -547,6 +549,7 @@
       "recovered_rt60": 0.7845,
       "error_pct": -1.93,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9981,
       "t20": 0.7579,
@@ -562,6 +565,7 @@
       "recovered_rt60": 0.803,
       "error_pct": 0.37,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9991,
       "t20": 0.8224,
@@ -577,6 +581,7 @@
       "recovered_rt60": 0.8194,
       "error_pct": 2.43,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9994,
       "t20": 0.8375,
@@ -592,6 +597,7 @@
       "recovered_rt60": 0.7947,
       "error_pct": -0.66,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9996,
       "t20": 0.7953,
@@ -609,6 +615,7 @@
       "recovered_rt60": 1.1586,
       "error_pct": -3.45,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9863,
       "t20": 1.039,
@@ -624,6 +631,7 @@
       "recovered_rt60": 1.0158,
       "error_pct": 1.58,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9948,
       "t20": 0.9227,
@@ -639,6 +647,7 @@
       "recovered_rt60": 0.8473,
       "error_pct": 5.91,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9977,
       "t20": 0.8114,
@@ -654,6 +663,7 @@
       "recovered_rt60": 0.73,
       "error_pct": 4.29,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9982,
       "t20": 0.7068,
@@ -669,6 +679,7 @@
       "recovered_rt60": 0.6065,
       "error_pct": 1.09,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9991,
       "t20": 0.5903,
@@ -684,6 +695,7 @@
       "recovered_rt60": 0.5294,
       "error_pct": 5.89,
       "used_metric": "T30",
+      "tier": "valid",
       "valid": true,
       "r2": 0.9998,
       "t20": 0.5261,
@@ -706,7 +718,9 @@
         "t30": 6.2097,
         "bias_t30": 5.4097,
         "r2_t30": 0.6287,
-        "used_metric": "T20"
+        "used_metric": "T20",
+        "tier": "approximate",
+        "valid": false
       },
       "simplified_noise_floor_truncation": {
         "t20": 0.7983,
@@ -715,7 +729,9 @@
         "t30": 0.795,
         "bias_t30": -0.005,
         "r2_t30": 0.9999,
-        "used_metric": "T30"
+        "used_metric": "T30",
+        "tier": "valid",
+        "valid": true
       }
     },
     "snr_20db": {
@@ -728,7 +744,9 @@
         "t30": 9.3194,
         "bias_t30": 8.5194,
         "r2_t30": 0.8339,
-        "used_metric": "none"
+        "used_metric": "none",
+        "tier": "invalid",
+        "valid": false
       },
       "simplified_noise_floor_truncation": {
         "t20": 0.7936,
@@ -737,7 +755,9 @@
         "t30": 0.7578,
         "bias_t30": -0.0422,
         "r2_t30": 0.997,
-        "used_metric": "T30"
+        "used_metric": "T30",
+        "tier": "valid",
+        "valid": true
       }
     }
   },
@@ -751,6 +771,7 @@
         "t30": 9.4943,
         "r2_t30": 0.8435,
         "used_metric": "none",
+        "tier": "invalid",
         "valid": false
       },
       "with_truncation": {
@@ -760,6 +781,7 @@
         "t30": 0.7534,
         "r2_t30": 0.996,
         "used_metric": "T30",
+        "tier": "valid",
         "valid": true
       }
     },
@@ -772,6 +794,7 @@
         "t30": 10.7251,
         "r2_t30": 0.8045,
         "used_metric": "none",
+        "tier": "invalid",
         "valid": false
       },
       "with_truncation": {
@@ -781,7 +804,8 @@
         "t30": 0.6408,
         "r2_t30": 0.9645,
         "used_metric": "T20",
-        "valid": true
+        "tier": "approximate",
+        "valid": false
       }
     },
     "dr_25db": {
@@ -793,6 +817,7 @@
         "t30": 6.3092,
         "r2_t30": 0.7648,
         "used_metric": "none",
+        "tier": "invalid",
         "valid": false
       },
       "with_truncation": {
@@ -802,6 +827,7 @@
         "t30": 0.4373,
         "r2_t30": 0.8828,
         "used_metric": "none",
+        "tier": "invalid",
         "valid": false
       }
     },
@@ -814,6 +840,7 @@
         "t30": 3.9411,
         "r2_t30": 0.7633,
         "used_metric": "none",
+        "tier": "invalid",
         "valid": false
       },
       "with_truncation": {
@@ -823,6 +850,7 @@
         "t30": 0.0864,
         "r2_t30": 0.7748,
         "used_metric": "none",
+        "tier": "invalid",
         "valid": false
       }
     }

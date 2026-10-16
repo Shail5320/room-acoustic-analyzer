@@ -3,7 +3,7 @@ reference/rt60.py — Schroeder backward integration and RT60 estimation.
 Implements:
   - Schroeder integration (EDC)
   - T20 (-5 to -25 dB), T30 (-5 to -35 dB), EDT (0 to -10 dB), R^2
-  - Validity rules: T30 if >= 35 dB range, else T20 if >= 25 dB, else invalid
+  - 3-tier validity classification ("valid", "approximate", "invalid")
   - Simplified noise-floor truncation
 """
 
@@ -18,6 +18,13 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+# Named threshold constants for RT60 validity assessment
+FIT_RANGE_T30 = 35.0   # dB required to fit T30 (-5 to -35 dB from direct arrival)
+FIT_RANGE_T20 = 25.0   # dB required to fit T20 (-5 to -25 dB from direct arrival)
+TIER_MARGIN_DB = 10.0  # dB safety margin required above fit range for "valid" tier
+MIN_R2 = 0.95          # Minimum linear fit coefficient of determination R^2
+
 
 def compute_edc(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
                 pre_silence: np.ndarray = None) -> tuple[np.ndarray, np.ndarray, float]:
@@ -143,7 +150,7 @@ def fit_decay(t: np.ndarray, edc_db: np.ndarray, db_start: float, db_end: float)
     return rt_val, r2
 
 def analyze_rt60(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
-                 pre_silence: np.ndarray = None, min_r2: float = 0.95) -> dict:
+                 pre_silence: np.ndarray = None, min_r2: float = MIN_R2) -> dict:
     """
     Full RT60 analysis of an impulse response.
     
@@ -153,10 +160,10 @@ def analyze_rt60(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
       - T30 (-5 to -35 dB)
       - R^2 for each fit
       - Usable dynamic range
-      - Validity decision:
-          * T30 if dynamic range >= 35 dB AND R^2 >= min_r2
-          * T20 if dynamic range >= 25 dB AND R^2 >= min_r2
-          * invalid otherwise
+      - Validity decision (3 tiers):
+          * "valid": usable dynamic range >= fit range + 10 dB (45 dB for T30, 35 dB for T20) AND R^2 >= min_r2
+          * "approximate": usable dynamic range >= fit range (35 dB for T30, 25 dB for T20) AND R^2 >= min_r2, but not the margin
+          * "invalid": fails fit range or R^2 < min_r2
     """
     t, edc_db, available_range_db = compute_edc(h, fs=fs, truncate_noise=truncate_noise,
                                                 pre_silence=pre_silence)
@@ -165,35 +172,76 @@ def analyze_rt60(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
     t20, r2_t20 = fit_decay(t, edc_db, -5.0, -25.0)
     t30, r2_t30 = fit_decay(t, edc_db, -5.0, -35.0)
     
-    # Validity rules:
-    # T30 only if >= 35 dB range and linear fit R^2 >= min_r2,
-    # else T20 if >= 25 dB and R^2 >= min_r2,
-    # else invalid
-    if available_range_db >= 35.0 and not np.isnan(t30) and r2_t30 >= min_r2:
-        used = 'T30'
-        valid = True
+    eff_range = round(available_range_db, 1)
+
+    # Determine validity tier for T30
+    if not np.isnan(t30) and r2_t30 >= min_r2:
+        if eff_range >= FIT_RANGE_T30 + TIER_MARGIN_DB:
+            tier_t30 = "valid"
+        elif eff_range >= FIT_RANGE_T30:
+            tier_t30 = "approximate"
+        else:
+            tier_t30 = "invalid"
+    else:
+        tier_t30 = "invalid"
+
+    # Determine validity tier for T20
+    if not np.isnan(t20) and r2_t20 >= min_r2:
+        if eff_range >= FIT_RANGE_T20 + TIER_MARGIN_DB:
+            tier_t20 = "valid"
+        elif eff_range >= FIT_RANGE_T20:
+            tier_t20 = "approximate"
+        else:
+            tier_t20 = "invalid"
+    else:
+        tier_t20 = "invalid"
+
+    # Priority selection logic:
+    # 1. Prefer T30 if "valid" (45 dB usable range + R^2 >= 0.95)
+    # 2. Prefer T20 if "valid" (35 dB usable range + R^2 >= 0.95) over approximate T30
+    # 3. Fall back to T30 if "approximate" (35-45 dB usable range + R^2 >= 0.95)
+    # 4. Fall back to T20 if "approximate" (25-35 dB usable range + R^2 >= 0.95)
+    # 5. Otherwise "invalid"
+    if tier_t30 == "valid":
+        used = "T30"
+        tier = "valid"
         rt60 = t30
         r2 = r2_t30
-    elif available_range_db >= 25.0 and not np.isnan(t20) and r2_t20 >= min_r2:
-        used = 'T20'
-        valid = True
+    elif tier_t20 == "valid":
+        used = "T20"
+        tier = "valid"
+        rt60 = t20
+        r2 = r2_t20
+    elif tier_t30 == "approximate":
+        used = "T30"
+        tier = "approximate"
+        rt60 = t30
+        r2 = r2_t30
+    elif tier_t20 == "approximate":
+        used = "T20"
+        tier = "approximate"
         rt60 = t20
         r2 = r2_t20
     else:
-        used = 'none'
-        valid = False
-        rt60 = float('nan')
-        r2 = float('nan')
+        used = "none"
+        tier = "invalid"
+        rt60 = float("nan")
+        r2 = float("nan")
+
+    valid = (tier == "valid")
         
     return {
         'rt60': rt60,
         'used': used,
         'valid': valid,
+        'tier': tier,
         'r2': r2,
         't20': t20,
         'r2_t20': r2_t20,
+        'tier_t20': tier_t20,
         't30': t30,
         'r2_t30': r2_t30,
+        'tier_t30': tier_t30,
         'edt': edt,
         'r2_edt': r2_edt,
         'dynamic_range_db': available_range_db,
@@ -239,7 +287,6 @@ if __name__ == '__main__':
     print(f"  Available range: {res['dynamic_range_db']:.1f} dB")
     print(f"  EDT: {res['edt']:.4f} s (R2 = {res['r2_edt']:.4f})")
     print(f"  T20: {res['t20']:.4f} s (R2 = {res['r2_t20']:.4f})")
-    print(f"  T30: {res['t30']:.4f} s (R2 = {res['r2_t30']:.4f})")
-    print(f"  Selected: {res['used']} = {res['rt60']:.4f} s, Valid: {res['valid']}, R2: {res['r2']:.4f}")
+    print(f"  Selected: {res['used']} = {res['rt60']:.4f} s, Tier: {res['tier']}, Valid: {res['valid']}, R2: {res['r2']:.4f}")
     error_pct = abs(res['rt60'] - 0.8) / 0.8 * 100.0
     print(f"  Error: {error_pct:.2f}%")

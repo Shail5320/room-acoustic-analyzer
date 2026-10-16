@@ -182,14 +182,78 @@ Phase 7              →  Polish + hardening
 
 | # | Task | Acceptance |
 |---|---|---|
-| 2.10 | `src/dsp/rt60.js` — Schroeder integration (reverse cumulative sum of h²), EDC in dB, least-squares fit for T20 (−5 to −25 dB), T30 (−5 to −35 dB), EDT (0 to −10 dB), R². Validity rules: T30 needs ≥ 35 dB usable range AND R² ≥ 0.95; T20 needs ≥ 25 dB usable range AND R² ≥ 0.95; else invalid. | Unit tests match Python reference logic; corrupted un-truncated curves rejected |
-| 2.11 | Noise-floor estimation in `rt60.js` — accept pre-sweep silence samples (or estimate from IR tail). Truncate IR where smoothed squared envelope reaches noise floor. Subtract steady noise bias. | Unit test with known noise level matches Python |
+| 2.10 | `src/dsp/rt60.js` — Schroeder integration (reverse cumulative sum of h²), EDC in dB, least-squares fit for T20 (−5 to −25 dB), T30 (−5 to −35 dB), EDT (0 to −10 dB), R². Validity tiers: "valid" (usable dynamic range ≥ fit range + 10 dB AND R² ≥ 0.95); "approximate" (usable range ≥ fit range AND R² ≥ 0.95, but < 10 dB margin); else "invalid". | Unit tests match Python reference logic; corrupted un-truncated curves rejected |
+| 2.11 | Noise-floor estimation in `rt60.js` — accept pre-sweep silence samples (or estimate from IR tail). Truncate IR where 20 ms smoothed squared envelope reaches 2·σ² (+3 dB above noise floor). Subtract steady noise bias σ² in backward sum with zero clamping. | Unit test with known noise level matches Python |
 | 2.12 | End-to-end test (single RT60): generate sweep → synthetic IR (`synthetic_ir_single.bin`, seed=42) → convolve → deconvolve → band-filter → Schroeder → RT60. Compare with `expected_outputs.json`. | **Tier 1:** JS matches Python on same fixture to ≤ 0.001 s (≤ 0.1%).<br/>**Tier 2:** Recovers true 0.800 s within Monte Carlo 2σ bounds (table below) |
-| 2.13 | End-to-end test (multi RT60): synthetic IR with different RT60 per octave band (`synthetic_ir_multi.bin`, seed=42). Compare recovered per-band RT60 with Python reference and with true values. | **Tier 1:** JS matches Python on same fixture to ≤ 0.001 s (≤ 0.1%).<br/>**Tier 2:** Recovers true targets within Monte Carlo 2σ bounds (table below) |
-| 2.14 | Noise dynamic range test: synthetic IR at 45, 35, 25, 15 dB DR with/without truncation. Verify un-truncated curves are flagged invalid and truncated curves match Python recovery. | DR 45 dB → T30 valid; DR 35 dB → T20 valid; DR 25 & 15 dB → invalid. Un-truncated curves strictly invalid. Matches Python to ≤ 0.005 s |
+| 2.13 | End-to-end test (multi RT60): synthetic IR with different RT60 per octave band (`synthetic_ir_multi.bin`, seed=42). Compare recovered per-band RT60 with Python reference and with true targets. | **Tier 1:** JS matches Python on same fixture to ≤ 0.001 s (≤ 0.1%).<br/>**Tier 2:** Recovers true targets within Monte Carlo mean ± 2σ bounds (table below) |
+| 2.14 | Noise dynamic range test: synthetic IR at 45, 35, 25, 15 dB DR with/without truncation. Verify tier classification (DR 45 dB → valid T30; DR 35 dB → approximate T20; DR 25 & 15 dB → invalid; all un-truncated → invalid). | Tier classifications match Python reference; valid metrics agree within ≤ 0.005 s |
 | 2.15 | `src/dsp/sabine.js` — (a) Dimensionless absorption ratio: `RT60_measured / RT60_target` per band. (b) Optional (when V provided): Sabine A = 0.161·V/RT60, Delta_A, S_panel. (c) Eyring cross-check (requires dimensions). | Unit tests with hand-calculated values |
 | 2.16 | All tests green: `node --test tests/` | Zero failures |
 | 2.17 | Write `docs/learning/phase2.md` | FFT (radix-2 butterfly), sweep math, deconvolution, Butterworth (bilinear transform, pre-warping, SOS stability, why N=2), Schroeder method, noise floor, Sabine/Eyring, formulas, code map, common mistakes, 3 check questions |
+
+### Phase 2b Detailed Specification: Simplified Noise-Floor Truncation & RT60 Analysis
+
+The JavaScript implementation in `src/dsp/rt60.js` must implement the following numbered steps precisely:
+
+1. **Direct Sound Alignment & Peak Power:**
+   - Locate direct sound peak: $n_\text{peak} = \arg\max_n |h[n]|$.
+   - Extract decay sequence: $h_\text{decay}[n] = h[n + n_\text{peak}]$ for $n = 0, \dots, N-1$.
+   - Compute peak direct sound power: $P_\text{peak} = \max_n (h_\text{decay}[n]^2)$.
+2. **Noise Floor Estimation ($\sigma^2$):**
+   - If pre-sweep silence samples $s$ ($M > 0$) are available: $\sigma^2 = \frac{1}{M}\sum_{m=0}^{M-1} s[m]^2$.
+   - Otherwise, estimate from late 15% tail of decay ($N_\text{tail} = \max(\lfloor 0.15 \cdot N \rfloor, 1)$):  
+     $$\sigma^2 = \frac{1}{N_\text{tail}} \sum_{k=N-N_\text{tail}}^{N-1} h_\text{decay}[k]^2$$
+   - Peak-to-noise dynamic range:  
+     $$\text{DR}_\text{peak} = -10 \log_{10}\left(\frac{\max(\sigma^2, 10^{-15})}{\max(P_\text{peak}, 10^{-15})}\right)$$
+3. **Smoothed Squared Envelope (20 ms Window):**
+   - Moving average window length: $W = \max(\lfloor 0.02 \cdot f_s \rfloor, 1)$.
+   - Compute moving average of $h_\text{decay}[n]^2$ using a rectangular kernel of size $W$ with centered alignment (`mode='same'`):
+     $$\text{env}[n] = \frac{1}{W} \sum_{j=-\lfloor W/2 \rfloor}^{\lfloor (W-1)/2 \rfloor} h_\text{decay}[n+j]^2 \quad (\text{zero-padded at boundaries})$$
+4. **Truncation Point Detection (+3 dB Threshold & 50 ms Floor):**
+   - Threshold is 3 dB above estimated noise floor: $\text{threshold} = 2.0 \cdot \sigma^2$.
+   - Find first index $n$ where $\text{env}[n] < 2.0 \cdot \sigma^2$.
+   - If found, $n_\text{trunc} = n$; if never drops below threshold, $n_\text{trunc} = N - 1$.
+   - Enforce minimum integration length of 50 ms if signal permits:  
+     $$n_\text{trunc} = \max(n_\text{trunc}, \min(\lfloor 0.05 \cdot f_s \rfloor, N - 1))$$
+5. **Noise Energy Compensation & Backward Integration:**
+   - Truncate decay array: $h_\text{trunc} = h_\text{decay}[0 : n_\text{trunc}]$.
+   - Accumulate backward with steady noise power subtraction and zero clamping:
+     $$EDC[n] = \sum_{k=n}^{n_\text{trunc}-1} \max\left(0.0, h_\text{trunc}[k]^2 - \sigma^2\right)$$
+   - *Fallback:* If $EDC[0] \le 0$ or empty, integrate without subtraction: $EDC[n] = \sum_{k=n}^{n_\text{trunc}-1} h_\text{trunc}[k]^2$.
+   - Normalize and convert to decibels:
+     $$EDC_\text{norm}[n] = \frac{\max(EDC[n], 10^{-12})}{\max(EDC[0], 10^{-12})}$$
+     $$EDC_\text{dB}[n] = 10 \log_{10}(EDC_\text{norm}[n])$$
+6. **Usable Dynamic Range Estimation:**
+   - For truncated integration, usable depth is bounded by the truncation level:
+     $$D_\text{usable} = \min\left(|EDC_\text{dB}[n_\text{trunc}-1]|, \text{DR}_\text{peak}\right)$$
+   - For un-truncated integration, locate where $\text{env}[n] < 2.0 \cdot \sigma^2$; if $n < N$, $D_\text{usable} = |EDC_\text{dB}[n]|$, else $\text{DR}_\text{peak}$.
+7. **Least-Squares Regression & $R^2$ Rule:**
+   - Fit ordinary least-squares regression line $y(t) = m \cdot t + c$ over the specified evaluation range $[db_\text{start}, db_\text{end}]$:
+     - **EDT:** $0\text{ dB}$ to $-10\text{ dB}$
+     - **T20:** $-5\text{ dB}$ to $-25\text{ dB}$
+     - **T30:** $-5\text{ dB}$ to $-35\text{ dB}$
+   - Regression requires $\ge 10$ samples in the range. If $< 10$ samples or slope $m \ge 0$, return NaN.
+   - RT metric: $RT = -60.0 / m$.
+   - Goodness of fit:
+     $$R^2 = 1 - \frac{\sum_{i=1}^K (y_i - \hat{y}_i)^2}{\sum_{i=1}^K (y_i - \bar{y})^2}$$
+   - Fit requirement: $R^2 \ge \text{MIN\_R2} = 0.95$.
+8. **Validity Tiers Definition & Priority Selection:**
+   - Threshold constants:
+     - `FIT_RANGE_T30 = 35.0` dB (requires -5 to -35 dB fit range from direct sound)
+     - `FIT_RANGE_T20 = 25.0` dB (requires -5 to -25 dB fit range from direct sound)
+     - `TIER_MARGIN_DB = 10.0` dB (margin required above fit range for high confidence)
+     - `MIN_R2 = 0.95`
+   - Effective usable range: $D_\text{eff} = \text{round}(D_\text{usable}, 1)$.
+   - Per-metric tier evaluation:
+     - **`"valid"`**: $D_\text{eff} \ge \text{fit range} + 10\text{ dB}$ (45 dB for T30, 35 dB for T20) AND $R^2 \ge 0.95$.
+     - **`"approximate"`**: $D_\text{eff} \ge \text{fit range}$ (35 dB for T30, 25 dB for T20) AND $R^2 \ge 0.95$, but $D_\text{eff} < \text{fit range} + 10\text{ dB}$.
+     - **`"invalid"`**: fails fit range or $R^2 < 0.95$.
+   - Selection priority:
+     1. If T30 is `"valid"`: use T30, tier `"valid"`, `valid: true`.
+     2. Else if T20 is `"valid"`: use T20, tier `"valid"`, `valid: true` (a valid T20 with 10 dB margin is strictly preferred over an approximate T30).
+     3. Else if T30 is `"approximate"`: use T30, tier `"approximate"`, `valid: true`.
+     4. Else if T20 is `"approximate"`: use T20, tier `"approximate"`, `valid: true`.
+     5. Else: `used: "none"`, tier `"invalid"`, `valid: false`, `rt60: NaN`.
 
 ### Phase 2 Acceptance Criteria & Two-Tier Tolerances
 
@@ -205,19 +269,23 @@ Because both implementations execute the identical mathematical formulation in I
 - **Butterworth SOS coefficients:** Relative error $\le 10^{-8}$ against SciPy `butter(N=2, ..., output='sos')`
 - **Filter magnitude response:** Max deviation $\le 0.01\text{ dB}$ across 200+ log-spaced evaluation frequencies per band
 - **Recovered RT60 per band (same fixture):** Absolute difference $\le 0.001\text{ s}$ ($\le 0.1\%$) against `expected_outputs.json`
-- **Noise dynamic range test:** Valid metrics agree with Python within $\le 0.005\text{ s}$; invalid flags match Python exactly
+- **Noise dynamic range test:** Valid and approximate metrics agree with Python within $\le 0.005\text{ s}$; validity tiers (`valid`, `approximate`, `invalid`) match Python exactly.
 
 #### Tier 2: End-to-End Recovery vs. True Ground-Truth Acoustic RT60
-Derived directly from the 30-seed Monte Carlo evaluation across independent noise seeds, reflecting physical mode density limits (stochastic scatter) and filter selectivity (systematic leakage bias):
 
-| Octave Band | Single-RT60 Target (0.800 s)<br/>Tolerance (95% CI / 2σ) | Multi-RT60 Targets<br/>Tolerance (Mean ± 2σ) | Physical Justification |
+> [!IMPORTANT]
+> **Multi-RT60 Target Values vs. Effective Truth:**  
+> The nominal values in the multi-RT60 fixture ($1.2, 1.0, 0.8, 0.7, 0.6, 0.5\text{ s}$) are **synthesis targets** used during additive creation (`synthetic_ir_multi.py`). Because each octave band is generated using bandpass filtering and summed, overlapping filter skirts cause energy from slowly decaying adjacent bands (such as 125 Hz at $1.2\text{ s}$) to bleed into faster-decaying bands (such as 500 Hz and 4000 Hz). This synthesis overlap makes the effective acoustic decay in the composite signal differ systematically from nominal targets by up to $\sim +6\%$.  
+> **Do not change filter orders:** Total filter order must remain 4 ($N=2$ design order, 2 SOS biquads) to prevent excessive time-domain filter ringing at 125 Hz. Tier-2 tolerances for the multi-RT60 fixture are therefore derived directly from the 30-seed Monte Carlo empirical distribution ($\text{Mean bias} \pm 2\sigma$ per band).
+
+| Octave Band | Single-RT60 Target (0.800 s)<br/>Tolerance (95% CI / 2σ) | Multi-RT60 Targets<br/>Tolerance (Mean Bias ± 2σ) | Physical Justification |
 |:---:|:---:|:---:|---|
-| **125 Hz** | $0.800\text{ s} \pm 13\%$ ($0.696$ – $0.904\text{ s}$) | $1.200\text{ s} \pm 13\%$ ($1.04$ – $1.36\text{ s}$) | Narrow bandwidth ($\Delta f = 88.4\text{ Hz}$) produces high stochastic variance ($\sigma = 6.41\%$) |
-| **250 Hz** | $0.800\text{ s} \pm 8\%$ ($0.736$ – $0.864\text{ s}$) | $1.000\text{ s} \in [-3\%, +13\%]$ ($0.97$ – $1.13\text{ s}$) | Moderate bandwidth ($\sigma = 3.75\%$); slight leakage bias from 125 Hz |
-| **500 Hz** | $0.800\text{ s} \pm 6\%$ ($0.752$ – $0.848\text{ s}$) | $0.800\text{ s} \in [0\%, +12\%]$ ($0.80$ – $0.90\text{ s}$) | Mean leakage bias $+6.07\%$ from slower-decaying low-frequency tail |
-| **1000 Hz** | $0.800\text{ s} \pm 4\%$ ($0.768$ – $0.832\text{ s}$) | $0.700\text{ s} \in [-2\%, +6\%]$ ($0.69$ – $0.74\text{ s}$) | High mode density ($\sigma = 1.93\%$); small leakage bias ($+1.63\%$) |
-| **2000 Hz** | $0.800\text{ s} \pm 3\%$ ($0.776$ – $0.824\text{ s}$) | $0.600\text{ s} \in [0\%, +7\%]$ ($0.60$ – $0.64\text{ s}$) | High mode density ($\sigma = 1.25\%$); small leakage bias ($+2.91\%$) |
-| **4000 Hz** | $0.800\text{ s} \pm 2\%$ ($0.784$ – $0.816\text{ s}$) | $0.500\text{ s} \in [+2\%, +8\%]$ ($0.51$ – $0.54\text{ s}$) | Very high mode density ($\sigma = 0.72\%$); $+5.31\%$ filter leakage bias confirmed by $N=4$ test |
+| **125 Hz** | $0.800\text{ s} \pm 13\%$ ($0.696$ – $0.904\text{ s}$) | $1.200\text{ s} \in [-12.8\%, +11.8\%]$ ($1.046$ – $1.342\text{ s}$) | Narrow bandwidth ($\Delta f = 88.4\text{ Hz}$) produces high stochastic variance ($\sigma = 6.16\%$, mean bias $-0.48\%$) |
+| **250 Hz** | $0.800\text{ s} \pm 8\%$ ($0.736$ – $0.864\text{ s}$) | $1.000\text{ s} \in [-3.2\%, +12.5\%]$ ($0.968$ – $1.125\text{ s}$) | Moderate bandwidth ($\sigma = 3.91\%$); $+4.64\%$ mean bias from synthesis overlap & filter leakage |
+| **500 Hz** | $0.800\text{ s} \pm 6\%$ ($0.752$ – $0.848\text{ s}$) | $0.800\text{ s} \in [+0.6\%, +11.5\%]$ ($0.805$ – $0.892\text{ s}$) | Mean leakage bias $+6.07\%$ ($\sigma = 2.73\%$) from slower-decaying low-frequency tail |
+| **1000 Hz** | $0.800\text{ s} \pm 4\%$ ($0.768$ – $0.832\text{ s}$) | $0.700\text{ s} \in [-2.5\%, +5.7\%]$ ($0.683$ – $0.740\text{ s}$) | High mode density ($\sigma = 2.04\%$); $+1.63\%$ mean bias from synthesis overlap |
+| **2000 Hz** | $0.800\text{ s} \pm 3\%$ ($0.776$ – $0.824\text{ s}$) | $0.600\text{ s} \in [-0.4\%, +6.2\%]$ ($0.598$ – $0.637\text{ s}$) | High mode density ($\sigma = 1.63\%$); $+2.91\%$ mean bias from synthesis overlap |
+| **4000 Hz** | $0.800\text{ s} \pm 2\%$ ($0.784$ – $0.816\text{ s}$) | $0.500\text{ s} \in [+2.8\%, +7.9\%]$ ($0.514$ – $0.539\text{ s}$) | Very high mode density ($\sigma = 1.27\%$); $+5.31\%$ mean bias from stopband leakage & synthesis overlap |
 
 **STOP after Phase 2b.**
 

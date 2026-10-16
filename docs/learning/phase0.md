@@ -44,20 +44,81 @@ $$EDC(t) = \int_t^\infty h^2(\tau) d\tau = \int_t^T h^2(\tau) d\tau$$
 
 Because integration accumulates energy backward from the quiet tail to the energetic arrival, the resulting **Energy Decay Curve (EDC)** is completely monotonic, smooth, and deterministic.
 
-### 1.7 The Noise Floor Pitfall & Simplified Truncation
+### 1.7 The Noise Floor Pitfall & Simplified Truncation Algorithm
 In real measurements, the tail of $h(t)$ contains background acoustic noise ($w(t)$ with variance $\sigma^2 > 0$). If you integrate backward across the entire noisy signal:
 $$\int_t^T (h_\text{clean}^2(\tau) + \sigma^2) d\tau = \int_t^T h_\text{clean}^2(\tau) d\tau + \sigma^2 (T - t)$$
 
-The noise adds an artificial ramp $\sigma^2(T - t)$ that flattens out the decay curve in logarithmic space. On a dB scale, this causes the curve to level off, drastically flattening the regression slope and **inflating the measured RT60** by several seconds!
+The noise adds an artificial ramp $\sigma^2(T - t)$ that flattens out the decay curve in logarithmic space. On a dB scale, this causes the curve to level off into a horizontal plateau, drastically flattening the regression slope and **inflating the measured RT60** by several seconds!
 
-**Simplified Noise-Floor Truncation:**
-1. Estimate steady background noise power $\sigma^2$ from the late tail of the recording (or pre-sweep silence).
-2. Compute a smoothed squared envelope of the decay.
-3. Locate the truncation time $t_\text{trunc}$ where the decay envelope drops into the noise floor (e.g. within $3\text{ dB}$ of $\sigma^2$).
-4. Truncate the backward sum at $t_\text{trunc}$ and subtract the steady noise bias:
-   $$EDC[n] = \sum_{k=n}^{n_\text{trunc}} \max(0, h^2[k] - \sigma^2)$$
+#### Complete Numbered Algorithm Steps (Pure JS Reimplementation Specification)
 
-This restores the true exponential decay slope and eliminates noise-induced bias.
+To allow exact reimplementation in JavaScript (`src/dsp/rt60.js`) without reference to the Python source, the simplified noise-floor truncation and Schroeder integration algorithm is specified as follows:
+
+1. **Direct Sound Peak Alignment:**
+   - Locate the global absolute peak of the impulse response:
+     $$n_\text{peak} = \arg\max_{n} |h[n]|$$
+   - Extract the decaying response from the direct sound arrival forward:
+     $$h_\text{decay}[n] = h[n + n_\text{peak}], \quad n = 0, \dots, N-1$$
+   - Calculate direct sound peak power:
+     $$P_\text{peak} = \max_{n} (h_\text{decay}[n]^2)$$
+2. **Noise Floor Estimation ($\sigma^2$):**
+   - If pre-sweep silence samples $s[m]$ ($m = 0, \dots, M-1$, with $M > 0$) are provided:
+     $$\sigma^2 = \frac{1}{M} \sum_{m=0}^{M-1} s[m]^2$$
+   - Otherwise, estimate from the late $15\%$ tail of the decay ($N_\text{tail} = \max(\lfloor 0.15 \cdot N \rfloor, 1)$):
+     $$\sigma^2 = \frac{1}{N_\text{tail}} \sum_{k=N-N_\text{tail}}^{N-1} h_\text{decay}^2[k]$$
+   - Compute peak-to-noise dynamic range:
+     $$\text{DR}_\text{peak} = -10 \log_{10}\left(\frac{\max(\sigma^2, 10^{-15})}{\max(P_\text{peak}, 10^{-15})}\right)$$
+3. **20 ms Smoothing Window (Squared Envelope):**
+   - Window length in samples:
+     $$W = \max(\lfloor 0.02 \cdot f_s \rfloor, 1)$$
+   - Compute the smoothed squared energy envelope $\text{env}[n]$ by convolving $h_\text{decay}^2[n]$ with a rectangular kernel $\frac{1}{W}\mathbf{1}_W$ using centered alignment (`same` mode, zero-padded at boundaries):
+     $$\text{env}[n] = \frac{1}{W} \sum_{j=-\lfloor W/2 \rfloor}^{\lfloor (W-1)/2 \rfloor} h_\text{decay}^2[n + j]$$
+4. **Truncation Threshold (+3 dB) and Minimum Duration:**
+   - Truncation threshold is $3\text{ dB}$ ($2.0\times$) above the noise floor:
+     $$\text{threshold} = 2.0 \cdot \sigma^2$$
+   - Find the first index $n$ where $\text{env}[n] < \text{threshold}$.
+   - If found, $n_\text{trunc} = n$; if the envelope never drops below threshold, $n_\text{trunc} = N - 1$.
+   - Enforce a minimum integration length of $50\text{ ms}$ if the signal permits:
+     $$n_\text{trunc} = \max\left(n_\text{trunc}, \min(\lfloor 0.05 \cdot f_s \rfloor, N - 1)\right)$$
+5. **Noise Energy Compensation & Backward Integration:**
+   - Truncate the signal array: $h_\text{trunc} = h_\text{decay}[0 : n_\text{trunc}]$.
+   - Compensate for residual steady noise power by subtracting $\sigma^2$ and clamping negative values to zero before backward accumulation:
+     $$EDC[n] = \sum_{k=n}^{n_\text{trunc}-1} \max\left(0.0, h_\text{trunc}^2[k] - \sigma^2\right), \quad n = 0, \dots, n_\text{trunc}-1$$
+   - *(Fallback)* If $EDC[0] \le 0$ or empty, integrate without subtraction: $EDC[n] = \sum_{k=n}^{n_\text{trunc}-1} h_\text{trunc}^2[k]$.
+   - Normalize and convert to decibels:
+     $$EDC_\text{norm}[n] = \frac{\max(EDC[n], 10^{-12})}{\max(EDC[0], 10^{-12})}$$
+     $$EDC_\text{dB}[n] = 10 \log_{10}(EDC_\text{norm}[n])$$
+6. **Usable Dynamic Range Estimation:**
+   - For truncated integration, usable depth is determined by the truncation point:
+     $$D_\text{usable} = \min\left(|EDC_\text{dB}[n_\text{trunc}-1]|, \text{DR}_\text{peak}\right)$$
+   - For un-truncated integration, find where $\text{env}[n] < 2.0 \cdot \sigma^2$; if $n < N$, $D_\text{usable} = |EDC_\text{dB}[n]|$, else $\text{DR}_\text{peak}$.
+7. **Least-Squares Linear Fit & $R^2$ Rule:**
+   - Fit ordinary least squares $y = m \cdot t + c$ over the evaluation intervals:
+     - **EDT:** $0\text{ dB}$ to $-10\text{ dB}$
+     - **T20:** $-5\text{ dB}$ to $-25\text{ dB}$
+     - **T30:** $-5\text{ dB}$ to $-35\text{ dB}$
+   - Require at least 10 samples within the fit interval. If $< 10$ samples or slope $m \ge 0$, return NaN.
+   - Extrapolate to 60 dB decay: $RT = -60.0 / m$.
+   - Goodness of fit:
+     $$R^2 = 1 - \frac{\sum_{i=1}^K (y_i - \hat{y}_i)^2}{\sum_{i=1}^K (y_i - \bar{y})^2}$$
+   - Fit rule: require $R^2 \ge 0.95$.
+8. **Validity Tier Classification & Metric Selection:**
+   - Named constants:
+     - $\text{FIT\_RANGE\_T30} = 35.0\text{ dB}$
+     - $\text{FIT\_RANGE\_T20} = 25.0\text{ dB}$
+     - $\text{TIER\_MARGIN\_DB} = 10.0\text{ dB}$
+     - $\text{MIN\_R2} = 0.95$
+   - Effective range: $D_\text{eff} = \text{round}(D_\text{usable}, 1)$.
+   - Per-metric tier:
+     - **`"valid"`**: $D_\text{eff} \ge \text{fit range} + 10\text{ dB}$ ($45\text{ dB}$ for T30, $35\text{ dB}$ for T20) AND $R^2 \ge 0.95$.
+     - **`"approximate"`**: $D_\text{eff} \ge \text{fit range}$ ($35\text{ dB}$ for T30, $25\text{ dB}$ for T20) AND $R^2 \ge 0.95$, but below the 10 dB margin.
+     - **`"invalid"`**: fails fit range or $R^2 < 0.95$.
+   - Selection priority:
+     1. T30 if `"valid"`
+     2. T20 if `"valid"` (valid T20 with 10 dB margin is strictly preferred over approximate T30)
+     3. T30 if `"approximate"`
+     4. T20 if `"approximate"`
+     5. Otherwise `"invalid"` (`used: "none"`).
 
 ---
 
@@ -109,11 +170,14 @@ Linear regression $y(t) = m \cdot t + c$ is fitted over specified evaluation ran
 Goodness of fit is quantified by the coefficient of determination $R^2$:
 $$R^2 = 1 - \frac{\sum_{i} (y_i - \hat{y}_i)^2}{\sum_{i} (y_i - \bar{y})^2}$$
 
-### 2.6 Validity Criteria
-Given available decay range $D_\text{avail} = \min(|EDC_\text{dB}(t_\text{trunc})|, \text{SNR}_\text{peak})$:
-1. **$D_\text{avail} \ge 35\text{ dB}$:** Report **T30** (`used: "T30"`, `valid: true`).
-2. **$25\text{ dB} \le D_\text{avail} < 35\text{ dB}$:** Fallback to **T20** (`used: "T20"`, `valid: true`).
-3. **$D_\text{avail} < 25\text{ dB}$:** Insufficient decay range (`used: "none"`, `valid: false`).
+### 2.6 Validity Tiers & Decision Rules
+Given effective usable dynamic range $D_\text{eff} = \text{round}(D_\text{usable}, 1)$:
+1. **`"valid"` (High Confidence):**  
+   $D_\text{eff} \ge \text{fit range} + 10\text{ dB}$ ($45\text{ dB}$ for T30, $35\text{ dB}$ for T20) AND $R^2 \ge 0.95$.
+2. **`"approximate"` (Acceptable Fit, Margin Deficit):**  
+   $D_\text{eff} \ge \text{fit range}$ ($35\text{ dB}$ for T30, $25\text{ dB}$ for T20) AND $R^2 \ge 0.95$, but below the 10 dB margin.
+3. **`"invalid"` (Rejected):**  
+   Fails fit range or $R^2 < 0.95$. Corrupted un-truncated curves fall into this tier.
 
 ---
 
@@ -181,19 +245,23 @@ However, an impulse response decays exponentially. In our $2.5\text{ s}$ synthet
 Defining noise using time-averaged SNR underestimates the direct arrival's amplitude by $\sim 26\text{ dB}$. In room acoustics, the true physical constraint is the **Peak-to-Noise-Floor Dynamic Range (DR)**:
 $$\text{DR}_\text{dB} = 10 \log_{10}\left(\frac{P_\text{peak}}{\sigma_\text{noise}^2}\right)$$
 
-#### Systematic DR Evaluation (45 dB, 35 dB, 25 dB, 15 dB)
+##### Systematic DR Evaluation (45 dB, 35 dB, 25 dB, 15 dB)
 Evaluating the clean single-RT60 IR ($0.8000\text{ s}$) under controlled Gaussian noise floors:
 
-| Condition | Est. DR | Recovered T20 (s) | Recovered T30 (s) | Metric Used | Valid Flag | $R^2$ | True RT60 |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **DR 45 dB (no trunc)** | 18.3 dB | 10.9365 | 9.4943 | none | **False** | 0.8435 | 0.8000 s |
-| **DR 45 dB (truncated)** | 45.0 dB | 0.7934 | **0.7534** | **T30** | **True** | 0.9960 | 0.8000 s |
-| **DR 35 dB (no trunc)** | 8.7 dB | 11.7439 | 10.7251 | none | **False** | 0.8045 | 0.8000 s |
-| **DR 35 dB (truncated)** | 34.9 dB | **0.7109** | 0.6408 | **T20** | **True** | 0.9645 | 0.8000 s |
-| **DR 25 dB (no trunc)** | 2.6 dB | 6.7071 | 6.3092 | none | **False** | 0.7648 | 0.8000 s |
-| **DR 25 dB (truncated)** | 24.9 dB | 0.4827 | 0.4373 | none | **False** | 0.8828 | 0.8000 s |
-| **DR 15 dB (no trunc)** | 0.0 dB | 4.1909 | 3.9411 | none | **False** | 0.7633 | 0.8000 s |
-| **DR 15 dB (truncated)** | 16.4 dB | 0.0950 | 0.0864 | none | **False** | 0.7748 | 0.8000 s |
+| Condition | Est. DR | T20 (s) | T30 (s) | Metric Used | Validity Tier | Error vs. True (%) | $R^2$ | True RT60 |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **DR 45 dB (no trunc)** | 18.3 dB | 10.9365 | 9.4943 | none | **invalid** | N/A | 0.8435 | 0.8000 s |
+| **DR 45 dB (truncated)** | 45.0 dB | 0.7934 | **0.7534** | **T30** | **valid** | **-5.83%** | 0.9960 | 0.8000 s |
+| **DR 35 dB (no trunc)** | 8.7 dB | 11.7439 | 10.7251 | none | **invalid** | N/A | 0.8045 | 0.8000 s |
+| **DR 35 dB (truncated)** | 34.9 dB | **0.7109** | 0.6408 | **T20** | **approximate** | **-11.14%** | 0.9645 | 0.8000 s |
+| **DR 25 dB (no trunc)** | 2.6 dB | 6.7071 | 6.3092 | none | **invalid** | N/A | 0.7648 | 0.8000 s |
+| **DR 25 dB (truncated)** | 24.9 dB | 0.4827 | 0.4373 | none | **invalid** | N/A | 0.8828 | 0.8000 s |
+| **DR 15 dB (no trunc)** | 0.0 dB | 4.1909 | 3.9411 | none | **invalid** | N/A | 0.7633 | 0.8000 s |
+| **DR 15 dB (truncated)** | 16.4 dB | 0.0950 | 0.0864 | none | **invalid** | N/A | 0.7748 | 0.8000 s |
+
+> [!NOTE]
+> **Approximate Tier Audit (>15% Error Check):**  
+> In the systematic DR evaluation, exactly one row is classified as `"approximate"`: **DR 35 dB (truncated)**. It falls back to T20 because usable dynamic range is $34.9\text{ dB}$, meeting the $25\text{ dB}$ fit range with $R^2 = 0.9645 \ge 0.95$, but falling just $0.1\text{ dB}$ short of the $35\text{ dB}$ high-confidence margin. Its recovery error vs. true $0.8000\text{ s}$ is **$-11.14\%$**, safely within the $\le 15\%$ tolerance threshold.
 
 ![Noise Decay Comparison](file:///home/equator/playground/college/LSSP%20Project/reference/plots/noise_decay_comparison.png)
 
@@ -205,12 +273,12 @@ Meanwhile, the clean signal's total integrated energy is only $E_\text{sig} = \s
 As backward integration proceeds from $n=N$ to $n=0$, the noise accumulates linearly: $\sigma^2(N - n)$. On a logarithmic (dB) scale, this creates a slow ramp that flattens out the decay curve into an artificial plateau. Fitting a line through this flat plateau inflates T30 to $\sim 9.5\text{ s}$ ($+1086\%$ error!).
 
 #### Validity Logic Audit
-- **Old naive check:** Defined available dynamic range simply as $\text{DR} = 10 \log_{10}(P_\text{peak} / \sigma^2)$. At 45 dB DR without truncation, it observed $\text{DR} = 45\text{ dB} \ge 35\text{ dB}$ and falsely flagged the corrupted $9.5\text{ s}$ curve as `valid: True, used: T30`.
+- **Old naive check:** Defined available dynamic range simply as $\text{DR} = 10 \log_{10}(P_\text{peak} / \sigma^2)$. At 45 dB DR without truncation, it observed $\text{DR} = 45\text{ dB} \ge 35\text{ dB}$ and falsely flagged the corrupted $9.5\text{ s}$ curve as valid T30.
 - **Audited robust check:**
   1. The available decay depth is computed from the EDC curve itself at the point where the signal envelope hits the noise floor ($2\sigma^2$). Without truncation, the plateau limits usable decay depth to only $\sim 18.3\text{ dB}$ (at 45 dB DR) or $\sim 8.7\text{ dB}$ (at 35 dB DR).
   2. The linear regression fit must satisfy $R^2 \ge 0.95$.
-  Under these audited rules, **all corrupted un-truncated results are strictly rejected as invalid (`valid: False, used: "none"`)**, preventing dangerous false reports in acoustic treatment design.
-- **Boundary sensitivity at 25 dB DR:** At exactly $\text{DR} = 25\text{ dB}$, usable depth was $24.9\text{ dB}$ (0.1 dB below the threshold), triggering fallback to invalid. In real mobile app deployment, a $3\text{ dB}$ safety margin is recommended.
+  Under these audited rules, **all corrupted no-truncation results are strictly rejected as invalid (`tier: "invalid", used: "none"`)**, preventing dangerous false reports in acoustic treatment design.
+- **Boundary sensitivity at 25 dB DR:** At exactly $\text{DR} = 25\text{ dB}$, usable depth was $24.9\text{ dB}$ (0.1 dB below the threshold), triggering fallback to invalid.
 
 ---
 
@@ -236,19 +304,26 @@ To determine whether these deviations represent stochastic scatter (inherent aco
 The ensemble mean error across 30 seeds is virtually zero ($-0.21\%$ at 125 Hz, $+0.01\%$ at 4 kHz). The single-seed error of $-8.58\%$ at 125 Hz lies at $-1.34\sigma$ from the mean, completely within normal Gaussian variation.  
 *Physical cause:* Octave bandwidth scales with center frequency: $\Delta f = 88.4\text{ Hz}$ at 125 Hz vs $2828\text{ Hz}$ at 4 kHz. Schroeder's formulation demonstrates that statistical variance of an integrated noise tail scales as $\sigma \propto \frac{1}{\sqrt{B \cdot T}}$. Narrower bandwidth contains fewer room modes, increasing decay curve variance.
 
-#### 2. Multi-RT60 IR (Variable decay rates across bands)
-| Band (Hz) | Target RT60 (s) | Mean Error ($N=2$) | Std Dev $\sigma$ | Mean Error ($N=4$) | $\Delta$ Bias ($N=4$ vs $N=2$) |
-|:---:|:---:|:---:|:---:|:---:|:---:|
-| **125** | 1.20 | -0.48% | 6.16% | -0.06% | +0.42% |
-| **250** | 1.00 | **+4.64%** | 3.91% | **+4.51%** | -0.13% |
-| **500** | 0.80 | **+6.07%** | 2.73% | **+5.54%** | -0.53% |
-| **1000** | 0.70 | **+1.63%** | 2.04% | **+1.29%** | -0.34% |
-| **2000** | 0.60 | **+2.91%** | 1.63% | **+2.75%** | -0.16% |
-| **4000** | 0.50 | **+5.31%** | 1.27% | **+4.25%** | **-1.06%** |
+#### 2. Multi-RT60 IR (Synthesis Targets vs. Effective Ground Truth)
+
+> [!IMPORTANT]
+> **Synthesis Targets vs. Effective Truth:**  
+> The nominal RT60 values assigned to the multi-RT60 fixture ($1.2, 1.0, 0.8, 0.7, 0.6, 0.5\text{ s}$) represent **synthesis targets** passed to the additive band decay generator (`synthetic_ir_multi.py`). Because each band is synthesized via digital bandpass filtering and summed into a single composite impulse response, the overlapping frequency skirts of adjacent filters cause residual energy from slower decays (such as 125 Hz at $1.2\text{ s}$) to bleed into the decay tails of faster-decaying bands (such as 500 Hz and 4000 Hz).  
+> Consequently, the effective ground truth of the composite synthetic impulse response systematically differs from the nominal targets by up to about **$+6\%$**.  
+> **Do not change filter orders:** Total filter order must remain 4 ($N=2$ design order, 2 SOS biquads) to prevent excessive filter ringing at 125 Hz. Acceptance criteria for Phase 2 validation must therefore use wider Tier-2 tolerances derived directly from the 30-seed Monte Carlo empirical distribution: $[\text{Mean bias} - 2\sigma, \text{Mean bias} + 2\sigma]$ per band.
+
+| Band (Hz) | Target RT60 (s) | Mean Error ($N=2$) | Std Dev $\sigma$ | Mean ± 2σ Tolerance | Min Error (%) | Max Error (%) |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **125** | 1.20 | -0.48% | 6.16% | $[-12.8\%, +11.8\%]$ ($1.046$ – $1.342\text{ s}$) | -13.36% | +18.24% |
+| **250** | 1.00 | **+4.64%** | 3.91% | $[-3.2\%, +12.5\%]$ ($0.968$ – $1.125\text{ s}$) | -2.45% | +12.48% |
+| **500** | 0.80 | **+6.07%** | 2.73% | $[+0.6\%, +11.5\%]$ ($0.805$ – $0.892\text{ s}$) | -0.37% | +11.33% |
+| **1000** | 0.70 | **+1.63%** | 2.04% | $[-2.5\%, +5.7\%]$ ($0.683$ – $0.740\text{ s}$) | -1.28% | +5.55% |
+| **2000** | 0.60 | **+2.91%** | 1.63% | $[-0.4\%, +6.2\%]$ ($0.598$ – $0.637\text{ s}$) | +0.24% | +6.41% |
+| **4000** | 0.50 | **+5.31%** | 1.27% | $[+2.8\%, +7.9\%]$ ($0.514$ – $0.539\text{ s}$) | +2.95% | +7.65% |
 
 **Verdict: Systematic Filter Leakage Bias.**  
 Unlike the single-RT60 IR, mean errors in the multi-band IR are systematically positive ($+6.07\%$ at 500 Hz, $+5.31\%$ at 4 kHz).  
-*Physical cause:* In real rooms, lower frequencies decay much more slowly ($1.2\text{ s}$ at 125 Hz) than higher frequencies ($0.5\text{ s}$ at 4 kHz). After $0.8\text{ s}$, the 4 kHz band has decayed by $> 55\text{ dB}$, whereas the 125 Hz band has decayed by only $24\text{ dB}$. The energy in the low frequencies is $30\text{ dB}$ higher!  
+*Physical cause:* In real rooms and additive multi-band synthesis, lower frequencies decay much more slowly ($1.2\text{ s}$ at 125 Hz) than higher frequencies ($0.5\text{ s}$ at 4 kHz). After $0.8\text{ s}$, the 4 kHz band has decayed by $> 55\text{ dB}$, whereas the 125 Hz band has decayed by only $24\text{ dB}$. The energy in the low frequencies is $30\text{ dB}$ higher!  
 Even with $12\text{ dB/octave}$ attenuation, residual energy from slowly-decaying adjacent lower bands leaks through the Butterworth filter stopband into the quiet tail of the faster-decaying band, flattening its measured slope and inflating its RT60.  
 *Diagnostic confirmation:* Increasing filter order to $N=4$ (8th-order bandpass, $24\text{ dB/octave}$ skirts) reduced the bias at 4 kHz from $+5.31\%$ to $+4.25\%$, confirming that stopband leakage accounts for the systematic shift. In practice, $N=2$ remains standard to prevent excessive time-domain filter ringing at 125 Hz.
 
