@@ -4,16 +4,16 @@
 
 ## Current Status
 
-**Waiting for Phase 0 (Python reference) — owned by students.**
-Phase 2a is gated on `reference/expected_outputs.json` existing.
+Phase 0a completed (Python reference: sweep, synthetic IRs, deconvolution). Waiting for go-ahead for Phase 0b.
 
 ## Phase Tracker
 
 | Phase | Description | Status | Completed |
 |---|---|---|---|
-| 0 | Python reference scripts | **Owner: students** | — |
+| 0a | Python ref: sweep, synthetic IRs, deconvolution | Completed | 2026-10-16 |
+| 0b | Python ref: filters, Schroeder RT60, expected_outputs | Not started | — |
 | 1 | App shell + PWA | Completed | 2026-10-16 |
-| 2a | DSP core (FFT, sweep, deconvolution, filters) | Blocked (needs `expected_outputs.json`) | — |
+| 2a | DSP core (FFT, sweep, deconvolution, filters) | Blocked (needs Phase 0b) | — |
 | 2b | DSP analysis (Schroeder, RT60, noise floor, Sabine) | Not started | — |
 | 3a | Audio I/O + measurement flow | Not started | — |
 | 3b | Web Worker, single-device, results, deploy | Not started | — |
@@ -34,3 +34,5 @@ Phase 2a is gated on `reference/expected_outputs.json` existing.
 | 2026-10-16 | Single-device fallback confirmed (build after two-device). |
 | 2026-10-16 | Deploy: GitHub Pages from main branch, root. All paths relative. |
 | 2026-10-16 | Phase 1 completed: app shell, PWA manifest, service worker with versioned cache echomap-v1, and icons. |
+| 2026-10-16 | Phase 0 reinstated and assigned to assistant; split into Phase 0a and 0b. |
+| 2026-10-16 | Phase 0a completed: sweep, inverse filter, synthetic IRs (single & multi-band), and frequency-domain deconvolution reference scripts and plots. |

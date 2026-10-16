@@ -1,6 +1,6 @@
 # EchoMap — Implementation Plan
 
-> **Status:** Approved 2026-10-16. Phase 0 (Python reference) is owned by the students.
+> **Status:** Approved 2026-10-16. Phase 0 reinstated (re-assigned to assistant, split into Phase 0a and 0b).
 > No code will be written until "go" is given for each phase.
 
 ---
@@ -13,7 +13,7 @@
 | Test phones | Android (Chrome) |
 | Second device | Phone or Bluetooth speaker as fixed sound source |
 | Node.js | v22.23.1 (`node:test` supported) |
-| Python | 3.14.8, NumPy 2.5.3, SciPy 1.16.2 |
+| Python | 3.14.8, NumPy 2.4.6, SciPy 1.16.2, Matplotlib 3.10.8 |
 | Repo | github.com/Shail5320/room-acoustic-analyzer |
 | Hosting | GitHub Pages, deploy from **main branch, root** |
 | App URL | `https://shail5320.github.io/room-acoustic-analyzer/` |
@@ -25,7 +25,7 @@
 
 | Decision | Detail |
 |---|---|
-| **Phase 0** | Done by the students. `reference/expected_outputs.json` is ground truth. Phase 2 is gated on this file existing. |
+| **Phase 0** | Reinstated (assistant-owned). Python reference scripts in `reference/`. Split into Phase 0a and 0b. `reference/expected_outputs.json` produced in Phase 0b serves as ground truth for Phase 2. |
 | **Coordinates** | Floor plan uses relative (0–1) coords with a user-adjustable aspect ratio (default 4:3, stored in session). |
 | **Heatmap distances** | IDW uses aspect-corrected distances: `d = sqrt((dx·R)² + dy²)` where R = width/height aspect ratio. |
 | **Primary output** | Dimensionless absorption ratio per band: `RT60_measured / RT60_target`. |
@@ -68,8 +68,9 @@ Why N=2 and not N=4: a steeper filter (N=4 → 8th-order bandpass) has more ring
 Each phase (and sub-phase) ends with **STOP**. Do not proceed until "go" is given.
 
 ```
-Phase 0  (students)  →  reference/expected_outputs.json exists
-Phase 1              →  App shell + PWA deployed
+Phase 0a             →  Sweep, inverse filter, synthetic IRs, deconvolution
+Phase 0b             →  Octave filters, Schroeder RT60, noise tests, expected_outputs.json
+Phase 1              →  App shell + PWA deployed [COMPLETED]
 Phase 2a             →  DSP core: FFT, sweep, deconvolution, filters
 Phase 2b             →  DSP analysis: Schroeder, RT60, noise floor, Sabine
 Phase 3a             →  Audio I/O + measurement flow
@@ -82,20 +83,38 @@ Phase 7              →  Polish + hardening
 
 ---
 
-## Phase 0 — Python Reference (students)
+## Phase 0a — Python Reference: Sweep, Synthetic IR, Deconvolution
 
-Owned by the students. Produces `reference/expected_outputs.json` containing at minimum:
+**Goal:** Reference implementation of exponential sweep, inverse filter, synthetic IR generation, and deconvolution in pure NumPy/SciPy.
 
-- Sweep–inverse-filter convolution: peak-to-sidelobe ratio (dB) and peak waveform samples
-- Butterworth SOS coefficients per band at a reference sample rate (e.g. 48000 Hz)
-- Filter magnitude response at specified test frequencies
-- Synthetic single-RT60 IR: recovered RT60 per band and % error
-- Synthetic multi-RT60 IR: recovered RT60 per band and % error
-- Noise-floor test at 30 dB and 20 dB SNR: RT60 bias with and without truncation
+| # | Task | Acceptance |
+|---|---|---|
+| 0a.1 | `reference/requirements.txt` — pinned to actual installed versions (`numpy==2.4.6`, `scipy==1.16.2`, `matplotlib==3.10.8`) | File pinned to installed versions |
+| 0a.2 | `reference/sweep.py` — Exponential sine sweep with f1=50 Hz, f2=8000 Hz, T=5 s, fs=48000 Hz (constants), 20 ms half-Hann fades. Inverse filter `x_inv(t) = x(T-t) * exp(-t/L)`. Plot spectrogram and magnitude spectrum in `reference/plots/` (sweep falls ~3 dB/oct, inverse rises ~3 dB/oct). | Spectrogram and spectrum plots generated |
+| 0a.3 | Verify sweep convolved with inverse via `scipy.signal.fftconvolve` gives a sharp peak. Measure and report actual peak-to-sidelobe ratio in dB. Explain what limits it. | Peak-to-sidelobe reported in dB, explanation provided |
+| 0a.4 | `reference/synthetic_ir.py` — Fixed RNG seed (`seed=42`). Generate two synthetic IRs: (a) Single RT60 = 0.8 s: `h(t) = n(t) * exp(-6.908 * t / RT60)`; (b) Multi-RT60 per octave band (125, 250, 500, 1k, 2k, 4k Hz = 1.2, 1.0, 0.8, 0.7, 0.6, 0.5 s) by summing band-limited noise decays. Save both as float64 fixtures in `reference/fixtures/`. | Both IRs saved as float64 raw/npy fixtures |
+| 0a.5 | Create fake recording `y = fftconvolve(sweep, h)`. | Fake recording computed |
+| 0a.6 | `reference/deconvolve.py` — `h_est = ifft(fft(y) * fft(x_inv))` with zero-padding to power-of-two $\ge \text{len}(y) + \text{len}(x_\text{inv}) - 1$. Peak detection, extract IR starting a few ms before peak, normalise. Compare with true synthetic IR (overlay plot + max error figure in `reference/plots/`). | Overlay plot and error metric generated |
 
-Phase 2 will not start until this file exists and has been reviewed.
+**STOP after Phase 0a.**
 
 ---
+
+## Phase 0b — Python Reference: Filters, Schroeder, RT60, Reference Outputs
+
+**Goal:** Butterworth octave filtering, Schroeder decay curve, T20/T30 extraction, noise-floor bias tests, and generation of `reference/expected_outputs.json`.
+
+| # | Task | Acceptance |
+|---|---|---|
+| 0b.1 | `reference/bands.py` — 4th-order Butterworth bandpass (N=2, 2 SOS) per octave band (125, 250, 500, 1000, 2000, 4000 Hz). Export SOS coefficients and frequency response. | Filter plots in `reference/plots/` |
+| 0b.2 | `reference/rt60.py` — Schroeder integration, linear fit for T20 and T30, EDT, and R². | Decay curves plotted |
+| 0b.3 | End-to-end recovery test on single-RT60 IR: verify recovered RT60 within ~5% of 0.8 s. | Error table printed |
+| 0b.4 | End-to-end recovery test on multi-RT60 IR: verify per-band RT60 recovery. | Error table printed |
+| 0b.5 | Noise-floor bias test: add white noise at 30 dB and 20 dB SNR, test with and without truncation. | Bias comparison table printed |
+| 0b.6 | Produce `reference/expected_outputs.json` for Phase 2 validation. | File exists with ground truth numbers |
+| 0b.7 | Write `docs/learning/phase0.md`. | Full learning note |
+
+**STOP after Phase 0b.**
 
 ## Phase 1 — App Shell + PWA
 

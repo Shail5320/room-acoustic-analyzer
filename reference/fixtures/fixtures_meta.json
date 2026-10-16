@@ -1,0 +1,25 @@
+{
+  "fs": 48000,
+  "rng_seed": 42,
+  "ir_duration_s": 2.5,
+  "ir_samples": 120000,
+  "single_rt60_target_s": 0.8,
+  "octave_centres_hz": [
+    125,
+    250,
+    500,
+    1000,
+    2000,
+    4000
+  ],
+  "multi_rt60_targets_s": [
+    1.2,
+    1.0,
+    0.8,
+    0.7,
+    0.6,
+    0.5
+  ],
+  "recording_samples": 359999,
+  "recording_duration_s": 7.499979166666667
+}
