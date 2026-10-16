@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EchoMap — Room acoustic analyzer</title>
+    <meta name="description" content="Phone-first Room Acoustic Analyzer (PWA) to measure reverberation time (RT60) and plan acoustic absorption." />
+    
+    <!-- PWA & Mobile Meta Tags -->
+    <meta name="theme-color" content="#1a1c1e" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fdfcff" media="(prefers-color-scheme: light)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="EchoMap" />
+    
+    <!-- Relative links for GitHub Pages subpath compatibility -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-content">
+        <h1 class="app-title">EchoMap</h1>
+        <p class="app-subtitle">Room acoustic analyzer</p>
+      </div>
+      <div id="sw-status" class="status-indicator" title="Service Worker Status" aria-live="polite">PWA ready</div>
+    </header>
+
+    <main id="app" class="app-container">
+      <section class="card">
+        <h2>App Shell Initialized</h2>
+        <p>Phase 1 app shell is active and offline-capable.</p>
+        <p class="meta-note">Measurement and analysis tools will be enabled in subsequent phases.</p>
+      </section>
+
+      <section class="card quick-status">
+        <h3>System & PWA Status</h3>
+        <dl class="status-list">
+          <div>
+            <dt>Service Worker:</dt>
+            <dd id="status-sw">Checking...</dd>
+          </div>
+          <div>
+            <dt>Connectivity:</dt>
+            <dd id="status-online">Online</dd>
+          </div>
+          <div>
+            <dt>Display Mode:</dt>
+            <dd id="status-display">Browser Tab</dd>
+          </div>
+        </dl>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>Course project for Linear Systems and Signal Processing</p>
+    </footer>
+
+    <script>
+      // Service Worker Registration with relative scope
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js', { scope: './' })
+            .then((registration) => {
+              console.log('SW registered successfully:', registration.scope);
+              const swStatusEl = document.getElementById('status-sw');
+              if (swStatusEl) swStatusEl.textContent = 'Active (cached)';
+            })
+            .catch((error) => {
+              console.error('SW registration failed:', error);
+              const swStatusEl = document.getElementById('status-sw');
+              if (swStatusEl) swStatusEl.textContent = 'Failed';
+            });
+        });
+      } else {
+        const swStatusEl = document.getElementById('status-sw');
+        if (swStatusEl) swStatusEl.textContent = 'Not supported';
+      }
+
+      // Online / Offline monitor
+      function updateOnlineStatus() {
+        const onlineEl = document.getElementById('status-online');
+        if (onlineEl) {
+          onlineEl.textContent = navigator.onLine ? 'Online' : 'Offline (cached)';
+          onlineEl.className = navigator.onLine ? 'status-online' : 'status-offline';
+        }
+      }
+      window.addEventListener('online', updateOnlineStatus);
+      window.addEventListener('offline', updateOnlineStatus);
+      updateOnlineStatus();
+
+      // Detect display mode (standalone home-screen vs tab)
+      function updateDisplayMode() {
+        const displayEl = document.getElementById('status-display');
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        if (displayEl) {
+          displayEl.textContent = isStandalone ? 'Standalone (Home Screen)' : 'Browser Tab';
+        }
+      }
+      updateDisplayMode();
+    </script>
+  </body>
+</html>

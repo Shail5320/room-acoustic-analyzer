@@ -12,7 +12,7 @@ Phase 2a is gated on `reference/expected_outputs.json` existing.
 | Phase | Description | Status | Completed |
 |---|---|---|---|
 | 0 | Python reference scripts | **Owner: students** | — |
-| 1 | App shell + PWA | Not started | — |
+| 1 | App shell + PWA | Completed | 2026-10-16 |
 | 2a | DSP core (FFT, sweep, deconvolution, filters) | Blocked (needs `expected_outputs.json`) | — |
 | 2b | DSP analysis (Schroeder, RT60, noise floor, Sabine) | Not started | — |
 | 3a | Audio I/O + measurement flow | Not started | — |
@@ -33,3 +33,4 @@ Phase 2a is gated on `reference/expected_outputs.json` existing.
 | 2026-10-16 | Butterworth: N=2 design order → 4th-order bandpass → 2 SOS sections. |
 | 2026-10-16 | Single-device fallback confirmed (build after two-device). |
 | 2026-10-16 | Deploy: GitHub Pages from main branch, root. All paths relative. |
+| 2026-10-16 | Phase 1 completed: app shell, PWA manifest, service worker with versioned cache echomap-v1, and icons. |
