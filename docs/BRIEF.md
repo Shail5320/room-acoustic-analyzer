@@ -1,3 +1,5 @@
+> NOTE: docs/PLAN.md is the source of truth. Where this brief conflicts with it, PLAN.md wins.
+
 # PROJECT BRIEF: Room Acoustic Analyzer (installable web app / PWA)
 
 You are helping two second-year CS students build a course project for a Linear Systems and Signal Processing class. Neither of us knows mobile or web development. Our goals, in priority order:
@@ -37,11 +39,11 @@ Correctness and honesty matter more than speed. Take your time.
 The app measures how a room reverberates and tells us how much acoustic absorption to add.
 
 Flow:
-1. User enters room dimensions (length, width, height in metres) and draws/sets a simple floor plan.
+1. User draws/sets a simple floor plan using relative coordinates (0 to 1). Room dimensions are **not required** to start.
 2. A **fixed sound source** plays a test sweep.
 3. The phone is moved to several positions in the room. At each position it records the sweep and computes the room's reverberation time (RT60) in several frequency bands.
-4. The app builds a **heatmap** of RT60 over the floor plan, per frequency band.
-5. The user picks a target RT60. The app estimates how much extra absorption is needed and what that means in square metres of a chosen material.
+4. The app builds a **heatmap** of RT60 over the floor plan (in relative coordinates), per frequency band.
+5. The user picks a target RT60. The app shows a **dimensionless absorption ratio** (RT60_measured / RT60_target) per band. Optionally, if room dimensions are entered (in metres or step count at ~0.7 m/step, editable), the app converts this into approximate square metres of a chosen material.
 
 **Important terminology (put this in the app's help text too):** this app deals with **absorption / reverberation control** (making a room sound less echoey). It does NOT measure or design **sound insulation / soundproofing** (blocking sound from going through walls). These are different problems. Do not blur them.
 
@@ -54,7 +56,7 @@ Flow:
 - Position input: **manual**. The user taps their position on a floor-plan canvas before each measurement. No IMU or AR tracking.
 - Room shape: rectangular only in v1.
 - Storage: browser storage (IndexedDB or localStorage). No backend, no accounts.
-- Hosting: static hosting (GitHub Pages or similar). Microphone access requires a secure context, so the deployed app must be HTTPS. Local development works on `localhost`, but opening a laptop's LAN IP over plain http on a phone will NOT allow microphone access. Tell me how to test on a real phone (for example, by deploying early).
+- Hosting: static hosting (GitHub Pages). Microphone access requires a secure context, so the deployed app must be HTTPS. Local development works on `localhost`, but opening a laptop's LAN IP over plain http on a phone will NOT allow microphone access. Testing on a real phone: deploy to GitHub Pages from Phase 1 as the primary test URL; also use Chrome USB port forwarding on Android.
 - Two roles in one app:
   - **Source mode:** plays the sweep (run this on the second device placed at a fixed spot).
   - **Measure mode:** records and analyses (run this on the phone we carry around).
@@ -111,7 +113,7 @@ L = T / ln(f2 / f1)
 K = 2*pi * f1 * L
 x(t) = sin( K * (exp(t / L) - 1) )
 ```
-- Defaults: f1 = 50 Hz (ask me before changing), f2 = 12000 Hz (phone speakers/mics are limited at the extremes; justify what you choose), T between 5 and 10 s.
+- Defaults: f1 = 50 Hz, f2 = 8000 Hz (analysis goes up to the 4 kHz octave band; revisit f2 if the 8 kHz band is enabled), T between 5 and 10 s. These are config constants.
 - Apply short fade-in/out (a few ms to tens of ms) to avoid clicks.
 
 **Inverse filter:** time-reverse the sweep and apply an amplitude envelope that falls at 6 dB per octave:
@@ -157,21 +159,30 @@ Output per position:
 { x, y, timestamp, snrDb, clipped, bands: { "125": { t20, t30, edt, r2, used, valid }, ... } }
 ```
 
-### 4.6 Absorption and treatment (Sabine)
-Metric units: V = room volume in m^3, S = total surface area in m^2.
+### 4.6 Absorption and treatment
+
+**Dimensionless result (always available, no room dimensions needed):**
 ```
-RT60 = 0.161 * V / A          A = total absorption in m^2 sabins = sum(S_i * alpha_i)
+absorption_ratio[band] = RT60_measured[band] / RT60_target
+```
+This tells the user how many times more absorption they need relative to what the room currently has (since total absorption A is inversely proportional to RT60 via Sabine). A ratio of 1 means the room already meets the target. A ratio of 3 means the total absorption must triple. Use the average of the **valid** measured RT60 values per band.
+
+**Material area estimate (optional, requires room dimensions):**
+Room dimensions can be entered in metres or as a step count (default ~0.7 m per step, editable). Label results as **approximate** when step count is used, and state that volume and area are approximate so material estimates inherit that uncertainty.
+
+Metric units: V = room volume in m³, S = total surface area in m².
+```
+RT60 = 0.161 * V / A          A = total absorption in m² sabins = sum(S_i * alpha_i)
 A_now    = 0.161 * V / RT60_measured
 A_target = 0.161 * V / RT60_target
 Delta_A  = A_target - A_now
 ```
-- Use the average of the **valid** measured RT60 values per band.
 - Area of a chosen material needed: `S_panel = Delta_A / (alpha_material - alpha_existing_surface)`, because the panel replaces whatever surface was there. Make `alpha_existing_surface` an editable input.
-- Cross-check with the Eyring formula when the average absorption coefficient is high, and show both.
+- Cross-check with the Eyring formula when the average absorption coefficient is high, and show both. (Only available when dimensions are entered.)
 - `materials.json`: each entry has a name, alpha per band, and a `source` field. **Do not fabricate coefficients.** Fill it with clearly marked placeholder values (`"placeholder": true`) and tell me which real manufacturer datasheets/standard tables we should copy numbers from. The UI must show a "placeholder values, verify with datasheet" notice wherever these are used.
-- `targets.json`: preset RT60 targets (for example small control room, vocal booth, live room) as editable rule-of-thumb values. Tell me honestly what source each preset comes from, and mark any you cannot source as "rule of thumb".
+- `targets.json`: preset RT60 targets (for example small control room, vocal booth, live room) as editable rule-of-thumb values. Give exact titles and editions for any sourced values; mark everything else as "rule of thumb".
 - State the model's limits in the UI: Sabine assumes a diffuse sound field. In small rooms, low-frequency behaviour is dominated by room modes, so results below roughly the 250 Hz band are less reliable and the model cannot design bass traps accurately.
-- Placement hint: highlight the regions with the longest RT60 on the heatmap and suggest treating nearby surfaces. Label this clearly as a heuristic, not a calculation.
+- Placement hint: highlight the regions with the longest RT60 on the heatmap and suggest treating nearby surfaces. Label this clearly as a heuristic, not a calculation. This works in relative coordinates without room dimensions.
 
 ---
 
@@ -194,16 +205,16 @@ Sweep playback, AudioWorklet capture with processing disabled, noise-floor check
 Acceptance: on a real phone, a measurement produces an impulse response plot and RT60 per band that look physically sensible (decay curves are roughly straight lines on the dB plot, low bands usually longer than high bands). Report honestly what you could and could not verify without a physical device.
 
 **Phase 4: Floor plan + data capture.**
-Room dimensions form, canvas floor plan with scale in metres, tap to place the source and each measurement position, list of saved points, save/load sessions, export to JSON and CSV.
-Acceptance: positions map correctly from canvas pixels to metres (include a unit test for the transform).
+Canvas floor plan in relative coordinates (0 to 1), tap to place the source and each measurement position, list of saved measurement points with data, save/load sessions (IndexedDB), export to JSON and CSV. Room dimensions are an optional input (metres or step count at ~0.7 m/step, editable) used only for the material area calculation in Phase 6.
+Acceptance: positions map correctly from canvas pixels to relative coordinates (include a unit test for the transform).
 
 **Phase 5: Heatmap.**
-Inverse-distance-weighted interpolation (power 2) over a grid covering the room, colour scale with legend, band selector, markers for measurement points and the source, clear message if fewer than 4 valid points exist (recommend 9 or more).
+Inverse-distance-weighted interpolation (power 2) over a grid in relative coordinates covering the room, colour scale with legend, band selector, markers for measurement points and the source, clear message if fewer than 4 valid points exist (recommend 9 or more).
 Acceptance: interpolation reproduces measured values at the measured points; test with synthetic data.
 
 **Phase 6: Treatment calculator.**
-Section 4.6 implemented with a clear results screen and the honest limitations text.
-Acceptance: hand-checked example worked out in the learning note.
+Section 4.6 implemented. The primary result is the dimensionless absorption ratio per band (no dimensions needed). When room dimensions are provided, show approximate material area in m². Clear results screen with honest limitations text.
+Acceptance: hand-checked example worked out in the learning note, both with and without dimensions.
 
 **Phase 7: Polish and hardening.**
 UI cleanup, error states (mic denied, no secure context, unsupported browser), accessibility basics, final README with setup, deployment steps, how to run tests, and a "known limitations" section.
