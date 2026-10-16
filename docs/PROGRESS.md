@@ -4,7 +4,7 @@
 
 ## Current Status
 
-Phase 0b completed (Butterworth filters, Schroeder RT60, noise tests, ground truth `reference/expected_outputs.json`, and learning note `docs/learning/phase0.md`). Phase 2a is unblocked.
+Phase 0c completed (peak-to-noise dynamic range analysis, validity logic audit, 30-seed Monte Carlo evaluation of scatter vs filter leakage bias, Phase 2 two-tier acceptance criteria established in `docs/PLAN.md`, and learning notes updated in `docs/learning/phase0.md`). Phase 2a is unblocked.
 
 ## Phase Tracker
 
@@ -12,6 +12,7 @@ Phase 0b completed (Butterworth filters, Schroeder RT60, noise tests, ground tru
 |---|---|---|---|
 | 0a | Python ref: sweep, synthetic IRs, deconvolution | Completed | 2026-10-16 |
 | 0b | Python ref: filters, Schroeder RT60, expected_outputs | Completed | 2026-10-16 |
+| 0c | Python ref: noise DR, 30-seed Monte Carlo, tolerances | Completed | 2026-10-16 |
 | 1 | App shell + PWA | Completed | 2026-10-16 |
 | 2a | DSP core (FFT, sweep, deconvolution, filters) | Ready to start | — |
 | 2b | DSP analysis (Schroeder, RT60, noise floor, Sabine) | Not started | — |
@@ -37,3 +38,4 @@ Phase 0b completed (Butterworth filters, Schroeder RT60, noise tests, ground tru
 | 2026-10-16 | Phase 0 reinstated and assigned to assistant; split into Phase 0a and 0b. |
 | 2026-10-16 | Phase 0a completed: sweep, inverse filter, synthetic IRs (single & multi-band), and frequency-domain deconvolution reference scripts and plots. |
 | 2026-10-16 | Phase 0b completed: octave Butterworth filters, Schroeder EDC, T20/T30/EDT extraction, validity rules, noise-floor truncation test, ground truth expected_outputs.json, and phase0.md learning notes. |
+| 2026-10-16 | Phase 0c completed: noise dynamic range (DR) evaluated at 45, 35, 25, 15 dB; un-truncated Schroeder corruption identified and rejected via depth and R² >= 0.95 checks; 30-seed Monte Carlo proved 125 Hz deviation is stochastic scatter while multi-band high-frequency error is filter leakage bias; two-tier Phase 2 acceptance criteria established in PLAN.md. |

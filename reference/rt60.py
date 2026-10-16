@@ -95,8 +95,17 @@ def compute_edc(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
         edc_norm = np.maximum(edc, 1e-12) / max(edc[0], 1e-12)
         edc_db = 10.0 * np.log10(edc_norm)
         
-        # Available range is limited by the physical noise floor
-        available_range_db = peak_to_noise_dr
+        # In un-truncated integration, noise accumulation flattens the curve.
+        # Determine the depth on the EDC curve where the signal envelope hits the noise floor (2 * sigma2).
+        win_len = max(int(0.02 * fs), 1)
+        kernel = np.ones(win_len, dtype=np.float64) / win_len
+        env = np.convolve(h_decay**2, kernel, mode='same')
+        below = np.where(env < 2.0 * sigma2)[0]
+        if len(below) > 0 and below[0] < N:
+            trunc_idx = int(below[0])
+            available_range_db = float(abs(edc_db[trunc_idx]))
+        else:
+            available_range_db = peak_to_noise_dr
         
     return t, edc_db, available_range_db
 
@@ -134,7 +143,7 @@ def fit_decay(t: np.ndarray, edc_db: np.ndarray, db_start: float, db_end: float)
     return rt_val, r2
 
 def analyze_rt60(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
-                 pre_silence: np.ndarray = None) -> dict:
+                 pre_silence: np.ndarray = None, min_r2: float = 0.95) -> dict:
     """
     Full RT60 analysis of an impulse response.
     
@@ -145,8 +154,8 @@ def analyze_rt60(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
       - R^2 for each fit
       - Usable dynamic range
       - Validity decision:
-          * T30 if dynamic range >= 35 dB
-          * T20 if dynamic range >= 25 dB
+          * T30 if dynamic range >= 35 dB AND R^2 >= min_r2
+          * T20 if dynamic range >= 25 dB AND R^2 >= min_r2
           * invalid otherwise
     """
     t, edc_db, available_range_db = compute_edc(h, fs=fs, truncate_noise=truncate_noise,
@@ -157,13 +166,15 @@ def analyze_rt60(h: np.ndarray, fs: int = 48000, truncate_noise: bool = True,
     t30, r2_t30 = fit_decay(t, edc_db, -5.0, -35.0)
     
     # Validity rules:
-    # T30 only if >= 35 dB range, else T20 if >= 25 dB, else invalid
-    if available_range_db >= 35.0 and not np.isnan(t30):
+    # T30 only if >= 35 dB range and linear fit R^2 >= min_r2,
+    # else T20 if >= 25 dB and R^2 >= min_r2,
+    # else invalid
+    if available_range_db >= 35.0 and not np.isnan(t30) and r2_t30 >= min_r2:
         used = 'T30'
         valid = True
         rt60 = t30
         r2 = r2_t30
-    elif available_range_db >= 25.0 and not np.isnan(t20):
+    elif available_range_db >= 25.0 and not np.isnan(t20) and r2_t20 >= min_r2:
         used = 'T20'
         valid = True
         rt60 = t20

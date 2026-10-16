@@ -170,6 +170,88 @@ Given available decay range $D_\text{avail} = \min(|EDC_\text{dB}(t_\text{trunc}
 
 **Conclusion:** Without noise truncation, background noise at 20–30 dB SNR completely corrupts Schroeder integration, inflating RT60 by hundreds of percent. The simplified noise-floor truncation reduces bias from $+5.4\text{ s}$ down to $-0.005\text{ s}$ at 30 dB SNR, and from $+8.5\text{ s}$ down to $-0.042\text{ s}$ at 20 dB SNR.
 
+### 4.3 Peak-to-Noise Dynamic Range (DR) vs. Time-Averaged SNR
+
+In audio and speech processing, signal power is conventionally computed as the time average over the entire buffer:
+$$P_\text{avg} = \frac{1}{N} \sum_{n=0}^{N-1} h^2[n]$$
+However, an impulse response decays exponentially. In our $2.5\text{ s}$ synthetic fixture ($120{,}000$ samples), the energetic direct arrival lasts only a few milliseconds, while the tail approaches zero. Consequently:
+- Peak direct-sound power: $P_\text{peak} = \max_n (h^2[n]) = 1.0 \implies 0\text{ dBFS}$
+- Time-averaged power: $P_\text{avg} \approx 0.002449 \implies -26.11\text{ dBFS}$
+
+Defining noise using time-averaged SNR underestimates the direct arrival's amplitude by $\sim 26\text{ dB}$. In room acoustics, the true physical constraint is the **Peak-to-Noise-Floor Dynamic Range (DR)**:
+$$\text{DR}_\text{dB} = 10 \log_{10}\left(\frac{P_\text{peak}}{\sigma_\text{noise}^2}\right)$$
+
+#### Systematic DR Evaluation (45 dB, 35 dB, 25 dB, 15 dB)
+Evaluating the clean single-RT60 IR ($0.8000\text{ s}$) under controlled Gaussian noise floors:
+
+| Condition | Est. DR | Recovered T20 (s) | Recovered T30 (s) | Metric Used | Valid Flag | $R^2$ | True RT60 |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **DR 45 dB (no trunc)** | 18.3 dB | 10.9365 | 9.4943 | none | **False** | 0.8435 | 0.8000 s |
+| **DR 45 dB (truncated)** | 45.0 dB | 0.7934 | **0.7534** | **T30** | **True** | 0.9960 | 0.8000 s |
+| **DR 35 dB (no trunc)** | 8.7 dB | 11.7439 | 10.7251 | none | **False** | 0.8045 | 0.8000 s |
+| **DR 35 dB (truncated)** | 34.9 dB | **0.7109** | 0.6408 | **T20** | **True** | 0.9645 | 0.8000 s |
+| **DR 25 dB (no trunc)** | 2.6 dB | 6.7071 | 6.3092 | none | **False** | 0.7648 | 0.8000 s |
+| **DR 25 dB (truncated)** | 24.9 dB | 0.4827 | 0.4373 | none | **False** | 0.8828 | 0.8000 s |
+| **DR 15 dB (no trunc)** | 0.0 dB | 4.1909 | 3.9411 | none | **False** | 0.7633 | 0.8000 s |
+| **DR 15 dB (truncated)** | 16.4 dB | 0.0950 | 0.0864 | none | **False** | 0.7748 | 0.8000 s |
+
+![Noise Decay Comparison](file:///home/equator/playground/college/LSSP%20Project/reference/plots/noise_decay_comparison.png)
+
+#### Why Un-Truncated Schroeder Curves Level Off & Inflate RT60
+When noise of variance $\sigma^2$ is integrated without truncation across $N$ samples, the total accumulated noise energy is $E_\text{noise} = N \cdot \sigma^2$. At $\text{DR} = 45\text{ dB}$, $\sigma^2 = 10^{-4.5} \approx 3.16 \times 10^{-5}$. Over $120{,}000$ samples:
+$$E_\text{noise} = 120{,}000 \times 3.16 \times 10^{-5} \approx 3.79$$
+Meanwhile, the clean signal's total integrated energy is only $E_\text{sig} = \sum h^2 \approx 0.058$. **The noise energy is $65\times$ greater than the total room response energy!**
+
+As backward integration proceeds from $n=N$ to $n=0$, the noise accumulates linearly: $\sigma^2(N - n)$. On a logarithmic (dB) scale, this creates a slow ramp that flattens out the decay curve into an artificial plateau. Fitting a line through this flat plateau inflates T30 to $\sim 9.5\text{ s}$ ($+1086\%$ error!).
+
+#### Validity Logic Audit
+- **Old naive check:** Defined available dynamic range simply as $\text{DR} = 10 \log_{10}(P_\text{peak} / \sigma^2)$. At 45 dB DR without truncation, it observed $\text{DR} = 45\text{ dB} \ge 35\text{ dB}$ and falsely flagged the corrupted $9.5\text{ s}$ curve as `valid: True, used: T30`.
+- **Audited robust check:**
+  1. The available decay depth is computed from the EDC curve itself at the point where the signal envelope hits the noise floor ($2\sigma^2$). Without truncation, the plateau limits usable decay depth to only $\sim 18.3\text{ dB}$ (at 45 dB DR) or $\sim 8.7\text{ dB}$ (at 35 dB DR).
+  2. The linear regression fit must satisfy $R^2 \ge 0.95$.
+  Under these audited rules, **all corrupted un-truncated results are strictly rejected as invalid (`valid: False, used: "none"`)**, preventing dangerous false reports in acoustic treatment design.
+- **Boundary sensitivity at 25 dB DR:** At exactly $\text{DR} = 25\text{ dB}$, usable depth was $24.9\text{ dB}$ (0.1 dB below the threshold), triggering fallback to invalid. In real mobile app deployment, a $3\text{ dB}$ safety margin is recommended.
+
+---
+
+### 4.4 Monte Carlo Statistical Analysis (30 Seeds): Scatter vs. Systematic Bias
+
+In Phase 0b, single-seed evaluation (`seed=42`) showed deviations from the true RT60:
+- Single-RT60 IR: $-8.58\%$ error at 125 Hz.
+- Multi-RT60 IR: $+5.91\%$ at 500 Hz, $+5.89\%$ at 4 kHz.
+
+To determine whether these deviations represent stochastic scatter (inherent acoustic variance) or systematic bias (algorithmic/filter leakage), we performed a 30-seed Monte Carlo study across seeds 0 to 29.
+
+#### 1. Single-RT60 IR (True = 0.800 s across all bands)
+| Band (Hz) | Mean Error (%) | Std Dev $\sigma$ (%) | 95% Confidence Interval ($\pm 2\sigma$) | Min Error (%) | Max Error (%) |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| **125** | **-0.21%** | **6.41%** | $\pm 12.83\%$ | -13.53% | +10.87% |
+| **250** | **+0.46%** | **3.75%** | $\pm 7.49\%$ | -6.70% | +8.94% |
+| **500** | **-0.29%** | **2.74%** | $\pm 5.47\%$ | -6.52% | +6.65% |
+| **1000** | **+0.35%** | **1.93%** | $\pm 3.86\%$ | -3.37% | +4.49% |
+| **2000** | **+0.13%** | **1.25%** | $\pm 2.49\%$ | -2.84% | +2.52% |
+| **4000** | **+0.01%** | **0.72%** | $\pm 1.44\%$ | -1.32% | +1.77% |
+
+**Verdict: Pure Stochastic Scatter.**  
+The ensemble mean error across 30 seeds is virtually zero ($-0.21\%$ at 125 Hz, $+0.01\%$ at 4 kHz). The single-seed error of $-8.58\%$ at 125 Hz lies at $-1.34\sigma$ from the mean, completely within normal Gaussian variation.  
+*Physical cause:* Octave bandwidth scales with center frequency: $\Delta f = 88.4\text{ Hz}$ at 125 Hz vs $2828\text{ Hz}$ at 4 kHz. Schroeder's formulation demonstrates that statistical variance of an integrated noise tail scales as $\sigma \propto \frac{1}{\sqrt{B \cdot T}}$. Narrower bandwidth contains fewer room modes, increasing decay curve variance.
+
+#### 2. Multi-RT60 IR (Variable decay rates across bands)
+| Band (Hz) | Target RT60 (s) | Mean Error ($N=2$) | Std Dev $\sigma$ | Mean Error ($N=4$) | $\Delta$ Bias ($N=4$ vs $N=2$) |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| **125** | 1.20 | -0.48% | 6.16% | -0.06% | +0.42% |
+| **250** | 1.00 | **+4.64%** | 3.91% | **+4.51%** | -0.13% |
+| **500** | 0.80 | **+6.07%** | 2.73% | **+5.54%** | -0.53% |
+| **1000** | 0.70 | **+1.63%** | 2.04% | **+1.29%** | -0.34% |
+| **2000** | 0.60 | **+2.91%** | 1.63% | **+2.75%** | -0.16% |
+| **4000** | 0.50 | **+5.31%** | 1.27% | **+4.25%** | **-1.06%** |
+
+**Verdict: Systematic Filter Leakage Bias.**  
+Unlike the single-RT60 IR, mean errors in the multi-band IR are systematically positive ($+6.07\%$ at 500 Hz, $+5.31\%$ at 4 kHz).  
+*Physical cause:* In real rooms, lower frequencies decay much more slowly ($1.2\text{ s}$ at 125 Hz) than higher frequencies ($0.5\text{ s}$ at 4 kHz). After $0.8\text{ s}$, the 4 kHz band has decayed by $> 55\text{ dB}$, whereas the 125 Hz band has decayed by only $24\text{ dB}$. The energy in the low frequencies is $30\text{ dB}$ higher!  
+Even with $12\text{ dB/octave}$ attenuation, residual energy from slowly-decaying adjacent lower bands leaks through the Butterworth filter stopband into the quiet tail of the faster-decaying band, flattening its measured slope and inflating its RT60.  
+*Diagnostic confirmation:* Increasing filter order to $N=4$ (8th-order bandpass, $24\text{ dB/octave}$ skirts) reduced the bias at 4 kHz from $+5.31\%$ to $+4.25\%$, confirming that stopband leakage accounts for the systematic shift. In practice, $N=2$ remains standard to prevent excessive time-domain filter ringing at 125 Hz.
+
 ---
 
 ## 5. Common Beginner Mistakes
@@ -195,3 +277,5 @@ Given available decay range $D_\text{avail} = \min(|EDC_\text{dB}(t_\text{trunc}
 1. **Why does harmonic distortion from a loudspeaker appear *before* the main impulse in a Farina exponential sweep deconvolution?**
 2. **If an acoustic measurement has an effective dynamic range of only $28\text{ dB}$ between direct sound and background noise, why must the algorithm report T20 rather than T30?**
 3. **Why does an 8th-order Butterworth bandpass filter ($N=4$) cause larger measurement errors than a 4th-order filter ($N=2$) when evaluating RT60 in the $125\text{ Hz}$ octave band?**
+4. **Why is dynamic range defined by peak direct-sound power rather than time-averaged buffer power in an impulse response?**
+5. **Why does the 125 Hz octave band exhibit a standard deviation of 6.4% in RT60 estimation, while the 4 kHz band exhibits only 0.72% across the same 30 seeds?**

@@ -23,7 +23,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sweep import generate_sweep, generate_inverse_filter, FS, T, F1, F2
+try:
+    from reference.sweep import generate_sweep, generate_inverse_filter, FS, T, F1, F2
+except ModuleNotFoundError:
+    from sweep import generate_sweep, generate_inverse_filter, FS, T, F1, F2
 
 RNG_SEED = 42
 IR_DURATION = 2.5    # 2.5 seconds (120,000 samples at 48 kHz)

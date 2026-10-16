@@ -258,6 +258,15 @@ def run_phase0b():
     # 5. Save Expected Outputs JSON
     # ---------------------------------------------------------
     json_path = "reference/expected_outputs.json"
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+                for k in ["noise_test_dr", "monte_carlo_stats"]:
+                    if k in existing and k not in output_data:
+                        output_data[k] = existing[k]
+        except Exception:
+            pass
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2)
 

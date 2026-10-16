@@ -70,6 +70,7 @@ Each phase (and sub-phase) ends with **STOP**. Do not proceed until "go" is give
 ```
 Phase 0a             →  Sweep, inverse filter, synthetic IRs, deconvolution
 Phase 0b             →  Octave filters, Schroeder RT60, noise tests, expected_outputs.json
+Phase 0c             →  Noise DR analysis, 30-seed Monte Carlo, tolerance derivation
 Phase 1              →  App shell + PWA deployed [COMPLETED]
 Phase 2a             →  DSP core: FFT, sweep, deconvolution, filters
 Phase 2b             →  DSP analysis: Schroeder, RT60, noise floor, Sabine
@@ -115,6 +116,23 @@ Phase 7              →  Polish + hardening
 | 0b.7 | Write `docs/learning/phase0.md`. | Full learning note |
 
 **STOP after Phase 0b.**
+
+---
+
+## Phase 0c — Python Reference: Noise Dynamic Range, Monte Carlo & Tolerances
+
+**Goal:** Rigorous peak-to-noise dynamic range analysis, 30-seed Monte Carlo study of statistical scatter vs filter leakage bias, and derivation of empirical Phase 2 acceptance tolerances.
+
+| # | Task | Acceptance |
+|---|---|---|
+| 0c.1 | Define noise by peak-to-noise dynamic range: $DR = 10 \log_{10}(P_\text{peak} / \sigma^2)$ vs time-averaged power $P_\text{avg}$. | Distinction and physical basis documented |
+| 0c.2 | `reference/noise_analysis.py` — Evaluate IR at 45, 35, 25, 15 dB DR with and without truncation. Audit validity logic ($R^2 \ge 0.95$ and depth check). | Corrupted curves correctly rejected; decay comparison plot generated |
+| 0c.3 | `reference/monte_carlo.py` — 30-seed Monte Carlo for Single-RT60 and Multi-RT60 ($N=2$ and $N=4$ Butterworth). | Mean error and standard deviation (%) per band; scatter vs bias mechanism identified |
+| 0c.4 | Update `reference/expected_outputs.json` with `noise_test_dr` and `monte_carlo_stats` (preserving all existing fields). | All sections present in ground truth JSON |
+| 0c.5 | Update Phase 2 acceptance criteria in `docs/PLAN.md` with two-tier tolerances. | Plan updated with justified tolerances |
+| 0c.6 | Add section on dynamic range vs SNR and statistical scatter to `docs/learning/phase0.md`. | Learning doc updated |
+
+**STOP after Phase 0c.**
 
 ## Phase 1 — App Shell + PWA
 
@@ -164,14 +182,42 @@ Phase 7              →  Polish + hardening
 
 | # | Task | Acceptance |
 |---|---|---|
-| 2.10 | `src/dsp/rt60.js` — Schroeder integration (reverse cumulative sum of h²), EDC in dB, least-squares fit for T20 (−5 to −25 dB), T30 (−5 to −35 dB), EDT (0 to −10 dB), R². Validity rules: T30 needs ≥ 35 dB range, T20 needs ≥ 25 dB, else invalid. | T20/T30 from clean synthetic IR within ~5% of true RT60 |
-| 2.11 | Noise-floor estimation in `rt60.js` — accept pre-sweep silence samples (or estimate from IR tail). Truncate IR where smoothed squared envelope reaches noise floor. Compensate for truncated noise energy. Label as "simplified noise-floor truncation". | Unit test with known noise level |
-| 2.12 | End-to-end test (single RT60): generate sweep → synthetic IR (RT60 = 0.8 s, same across bands) → convolve → deconvolve → band-filter → Schroeder → RT60. Compare with `expected_outputs.json`. | All bands within ~5% |
-| 2.13 | End-to-end test (multi RT60): synthetic IR with **different RT60 per octave band** (e.g. 125 Hz → 1.2 s, 250 Hz → 1.0 s, 500 Hz → 0.8 s, 1 kHz → 0.6 s, 2 kHz → 0.5 s, 4 kHz → 0.4 s). Compare recovered per-band RT60 with true values and with Python. | Each band within ~5–10% (wider tolerance at 125 Hz due to filter ringing) |
-| 2.14 | Noise-floor test: synthetic IR + white noise at 30 dB SNR and 20 dB SNR. Verify truncation reduces RT60 bias. Compare with Python noise-floor test. | Bias reduction documented, matches Python trend |
+| 2.10 | `src/dsp/rt60.js` — Schroeder integration (reverse cumulative sum of h²), EDC in dB, least-squares fit for T20 (−5 to −25 dB), T30 (−5 to −35 dB), EDT (0 to −10 dB), R². Validity rules: T30 needs ≥ 35 dB usable range AND R² ≥ 0.95; T20 needs ≥ 25 dB usable range AND R² ≥ 0.95; else invalid. | Unit tests match Python reference logic; corrupted un-truncated curves rejected |
+| 2.11 | Noise-floor estimation in `rt60.js` — accept pre-sweep silence samples (or estimate from IR tail). Truncate IR where smoothed squared envelope reaches noise floor. Subtract steady noise bias. | Unit test with known noise level matches Python |
+| 2.12 | End-to-end test (single RT60): generate sweep → synthetic IR (`synthetic_ir_single.bin`, seed=42) → convolve → deconvolve → band-filter → Schroeder → RT60. Compare with `expected_outputs.json`. | **Tier 1:** JS matches Python on same fixture to ≤ 0.001 s (≤ 0.1%).<br/>**Tier 2:** Recovers true 0.800 s within Monte Carlo 2σ bounds (table below) |
+| 2.13 | End-to-end test (multi RT60): synthetic IR with different RT60 per octave band (`synthetic_ir_multi.bin`, seed=42). Compare recovered per-band RT60 with Python reference and with true values. | **Tier 1:** JS matches Python on same fixture to ≤ 0.001 s (≤ 0.1%).<br/>**Tier 2:** Recovers true targets within Monte Carlo 2σ bounds (table below) |
+| 2.14 | Noise dynamic range test: synthetic IR at 45, 35, 25, 15 dB DR with/without truncation. Verify un-truncated curves are flagged invalid and truncated curves match Python recovery. | DR 45 dB → T30 valid; DR 35 dB → T20 valid; DR 25 & 15 dB → invalid. Un-truncated curves strictly invalid. Matches Python to ≤ 0.005 s |
 | 2.15 | `src/dsp/sabine.js` — (a) Dimensionless absorption ratio: `RT60_measured / RT60_target` per band. (b) Optional (when V provided): Sabine A = 0.161·V/RT60, Delta_A, S_panel. (c) Eyring cross-check (requires dimensions). | Unit tests with hand-calculated values |
 | 2.16 | All tests green: `node --test tests/` | Zero failures |
 | 2.17 | Write `docs/learning/phase2.md` | FFT (radix-2 butterfly), sweep math, deconvolution, Butterworth (bilinear transform, pre-warping, SOS stability, why N=2), Schroeder method, noise floor, Sabine/Eyring, formulas, code map, common mistakes, 3 check questions |
+
+### Phase 2 Acceptance Criteria & Two-Tier Tolerances
+
+Phase 2 validation separates numerical consistency (JS vs. Python) from statistical acoustic recovery (measurement vs. ground truth):
+
+#### Tier 1: JS Implementation vs. Python Reference on Identical Fixtures
+Because both implementations execute the identical mathematical formulation in IEEE 754 64-bit floating point on identical binary fixtures (`reference/fixtures/`), differences arise solely from minor runtime differences (e.g., standard math library trigonometric precision, accumulation order). Tolerances are strictly bounded:
+
+- **FFT round-trip:** Max sample error $< 10^{-10}$
+- **Sweep & Inverse Filter waveforms:** Max absolute sample difference $\le 10^{-6}$
+- **Peak-to-sidelobe ratio:** Match Python reference ($43.89\text{ dB}$) within $\pm 0.10\text{ dB}$
+- **Recovered IR waveform:** Max absolute sample difference $\le 10^{-5}$
+- **Butterworth SOS coefficients:** Relative error $\le 10^{-8}$ against SciPy `butter(N=2, ..., output='sos')`
+- **Filter magnitude response:** Max deviation $\le 0.01\text{ dB}$ across 200+ log-spaced evaluation frequencies per band
+- **Recovered RT60 per band (same fixture):** Absolute difference $\le 0.001\text{ s}$ ($\le 0.1\%$) against `expected_outputs.json`
+- **Noise dynamic range test:** Valid metrics agree with Python within $\le 0.005\text{ s}$; invalid flags match Python exactly
+
+#### Tier 2: End-to-End Recovery vs. True Ground-Truth Acoustic RT60
+Derived directly from the 30-seed Monte Carlo evaluation across independent noise seeds, reflecting physical mode density limits (stochastic scatter) and filter selectivity (systematic leakage bias):
+
+| Octave Band | Single-RT60 Target (0.800 s)<br/>Tolerance (95% CI / 2σ) | Multi-RT60 Targets<br/>Tolerance (Mean ± 2σ) | Physical Justification |
+|:---:|:---:|:---:|---|
+| **125 Hz** | $0.800\text{ s} \pm 13\%$ ($0.696$ – $0.904\text{ s}$) | $1.200\text{ s} \pm 13\%$ ($1.04$ – $1.36\text{ s}$) | Narrow bandwidth ($\Delta f = 88.4\text{ Hz}$) produces high stochastic variance ($\sigma = 6.41\%$) |
+| **250 Hz** | $0.800\text{ s} \pm 8\%$ ($0.736$ – $0.864\text{ s}$) | $1.000\text{ s} \in [-3\%, +13\%]$ ($0.97$ – $1.13\text{ s}$) | Moderate bandwidth ($\sigma = 3.75\%$); slight leakage bias from 125 Hz |
+| **500 Hz** | $0.800\text{ s} \pm 6\%$ ($0.752$ – $0.848\text{ s}$) | $0.800\text{ s} \in [0\%, +12\%]$ ($0.80$ – $0.90\text{ s}$) | Mean leakage bias $+6.07\%$ from slower-decaying low-frequency tail |
+| **1000 Hz** | $0.800\text{ s} \pm 4\%$ ($0.768$ – $0.832\text{ s}$) | $0.700\text{ s} \in [-2\%, +6\%]$ ($0.69$ – $0.74\text{ s}$) | High mode density ($\sigma = 1.93\%$); small leakage bias ($+1.63\%$) |
+| **2000 Hz** | $0.800\text{ s} \pm 3\%$ ($0.776$ – $0.824\text{ s}$) | $0.600\text{ s} \in [0\%, +7\%]$ ($0.60$ – $0.64\text{ s}$) | High mode density ($\sigma = 1.25\%$); small leakage bias ($+2.91\%$) |
+| **4000 Hz** | $0.800\text{ s} \pm 2\%$ ($0.784$ – $0.816\text{ s}$) | $0.500\text{ s} \in [+2\%, +8\%]$ ($0.51$ – $0.54\text{ s}$) | Very high mode density ($\sigma = 0.72\%$); $+5.31\%$ filter leakage bias confirmed by $N=4$ test |
 
 **STOP after Phase 2b.**
 
