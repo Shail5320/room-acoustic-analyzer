@@ -28,6 +28,7 @@ import {
   computeHeatmapRange,
   computeHeatmapGrid,
   extractPointBandValue,
+  evaluateHotspot,
 } from './heatmap-math.js';
 import { relativeToPixel } from './coordinates.js';
 
@@ -39,11 +40,21 @@ export const COARSE_GRID_COLS = 48;
 export class HeatmapRenderer {
   constructor() {
     this.rangeMode = 'auto'; // 'auto' | 'fixed'
+    this.placementHint = false;
     this._offscreenCanvas = null;
     this._offscreenCtx = null;
     this._cacheKey = null;
     this._cachedGrid = null;
     this._cachedRange = null;
+    this._cachedHotspot = null;
+  }
+
+  setPlacementHint(enabled) {
+    const val = Boolean(enabled);
+    if (this.placementHint !== val) {
+      this.placementHint = val;
+      this.invalidateCache();
+    }
   }
 
   setRangeMode(mode) {
@@ -59,6 +70,7 @@ export class HeatmapRenderer {
     this._cacheKey = null;
     this._cachedGrid = null;
     this._cachedRange = null;
+    this._cachedHotspot = null;
   }
 
   /**
@@ -66,7 +78,7 @@ export class HeatmapRenderer {
    */
   _buildCacheKey(model, band, aspectRatio) {
     const measurements = model.measurements || [];
-    // Hash key from band, count, aspect ratio, range mode, and measurement values
+    // Hash key from band, count, aspect ratio, range mode, placement hint, and measurement values
     const ptsHash = measurements
       .map((m) => {
         const b = m.bands && m.bands[band];
@@ -74,7 +86,7 @@ export class HeatmapRenderer {
       })
       .join('|');
 
-    return `${band}@${aspectRatio.toFixed(3)}@${this.rangeMode}@${ptsHash}`;
+    return `${band}@${aspectRatio.toFixed(3)}@${this.rangeMode}@hint:${this.placementHint}@${ptsHash}`;
   }
 
   /**
@@ -111,15 +123,32 @@ export class HeatmapRenderer {
 
     const values = grid.values;
     const { min, max } = range;
+    const hotspot = evaluateHotspot(usablePoints, values);
+    this._cachedHotspot = hotspot;
 
     for (let i = 0; i < values.length; i++) {
       const val = values[i];
       const color = valueToColor(val, min, max);
       const pixelIdx = i * 4;
-      data[pixelIdx + 0] = color.r;
-      data[pixelIdx + 1] = color.g;
-      data[pixelIdx + 2] = color.b;
-      data[pixelIdx + 3] = 230; // Slightly translucent (90% opacity) to let subtle floor accents show
+
+      if (this.placementHint && hotspot.hasHotspot && val >= hotspot.q3Threshold) {
+        // Highlight top-quartile cells: boost brightness with vibrant accent
+        data[pixelIdx + 0] = Math.min(255, color.r + 55);
+        data[pixelIdx + 1] = Math.min(255, color.g + 35);
+        data[pixelIdx + 2] = Math.max(0, color.b - 20);
+        data[pixelIdx + 3] = 255;
+      } else if (this.placementHint && hotspot.hasHotspot) {
+        // Slightly attenuate non-hotspot cells when placement hint is active
+        data[pixelIdx + 0] = color.r;
+        data[pixelIdx + 1] = color.g;
+        data[pixelIdx + 2] = color.b;
+        data[pixelIdx + 3] = 165;
+      } else {
+        data[pixelIdx + 0] = color.r;
+        data[pixelIdx + 1] = color.g;
+        data[pixelIdx + 2] = color.b;
+        data[pixelIdx + 3] = 230; // Slightly translucent (90% opacity)
+      }
     }
 
     ctx.putImageData(imgData, 0, 0);
@@ -132,12 +161,12 @@ export class HeatmapRenderer {
    * @param {{ x: number, y: number, width: number, height: number }} roomBounds
    * @param {object} model SessionModel
    * @param {object} [options]
-   * @returns {{ isReliable: boolean, usablePoints: Array<object>, range: object, hasFake: boolean }}
+   * @returns {{ isReliable: boolean, usablePoints: Array<object>, range: object, hasFake: boolean, hotspot?: object }}
    */
   render(ctx, roomBounds, model, options = {}) {
     const { x, y, width, height } = roomBounds;
     if (width <= 0 || height <= 0) {
-      return { isReliable: false, usablePoints: [], range: { min: 0, max: 2 }, hasFake: false };
+      return { isReliable: false, usablePoints: [], range: { min: 0, max: 2 }, hasFake: false, hotspot: null };
     }
 
     const band = model.activeBand || 500;
@@ -168,7 +197,7 @@ export class HeatmapRenderer {
     if (usablePoints.length === 0) {
       // No usable points: keep interior clean
       ctx.restore();
-      return { isReliable, usablePoints, range, hasFake };
+      return { isReliable, usablePoints, range, hasFake, hotspot: this._cachedHotspot };
     }
 
     if (!isReliable) {
@@ -192,11 +221,11 @@ export class HeatmapRenderer {
       ctx.save();
       this._drawUnreliableOverlay(ctx, roomBounds, usablePoints.length);
       ctx.restore();
-      return { isReliable, usablePoints, range, hasFake };
+      return { isReliable, usablePoints, range, hasFake, hotspot: this._cachedHotspot };
     }
 
     ctx.restore();
-    return { isReliable, usablePoints, range, hasFake };
+    return { isReliable, usablePoints, range, hasFake, hotspot: this._cachedHotspot };
   }
 
   /**

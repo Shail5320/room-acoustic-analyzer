@@ -1,0 +1,154 @@
+{
+  "metadata": {
+    "description": "Ground truth expected values for Phase 6 Treatment Calculator",
+    "sabine_c": 0.161
+  },
+  "plan_example": {
+    "geometry": {
+      "length": 5.0,
+      "width": 4.0,
+      "height": 3.0,
+      "volume": 60.0,
+      "surface_area": 94.0,
+      "wall_ceiling_area": 74.0
+    },
+    "measured_rt60": 1.2,
+    "target_rt60": 0.4,
+    "existing_alpha": 0.05,
+    "material_alpha": 0.8,
+    "sabine": {
+      "ratio": 2.9999999999999996,
+      "target_met": false,
+      "a_now": 8.05,
+      "a_target": 24.15,
+      "delta_a": 16.099999999999998,
+      "s_panel": 21.466666666666665,
+      "net_alpha": 0.75,
+      "guard_reason": null
+    },
+    "eyring": {
+      "alpha_avg_now": 0.08207381296314509,
+      "alpha_avg_target": 0.22656596486229685,
+      "a_now": 7.714938418535638,
+      "a_target": 21.297200697055903,
+      "delta_a": 13.582262278520265,
+      "s_panel": 18.10968303802702,
+      "net_alpha": 0.75,
+      "guard_reason": null,
+      "is_dead_room": false
+    }
+  },
+  "dead_room_example": {
+    "geometry": {
+      "length": 4.0,
+      "width": 3.0,
+      "height": 2.4,
+      "volume": 28.799999999999997,
+      "surface_area": 57.6,
+      "wall_ceiling_area": 45.599999999999994
+    },
+    "measured_rt60": 0.8,
+    "target_rt60": 0.25,
+    "existing_alpha": 0.05,
+    "material_alpha": 0.85,
+    "sabine": {
+      "ratio": 4.0,
+      "target_met": false,
+      "a_now": 5.795999999999999,
+      "a_target": 23.183999999999997,
+      "delta_a": 17.387999999999998,
+      "s_panel": 21.735,
+      "net_alpha": 0.7999999999999999,
+      "guard_reason": null
+    },
+    "eyring": {
+      "alpha_avg_now": 0.09572792866106683,
+      "alpha_avg_target": 0.33135366107384057,
+      "a_now": 5.513928690877449,
+      "a_target": 19.085970877853217,
+      "delta_a": 13.572042186975768,
+      "s_panel": 16.965052733719713,
+      "net_alpha": 0.7999999999999999,
+      "guard_reason": null,
+      "is_dead_room": true
+    }
+  },
+  "corners": {
+    "steps": {
+      "volume_nominal": 60.0,
+      "volume_min": 42.0,
+      "volume_max": 78.0,
+      "rt60_mean": 1.2,
+      "rt60_min": 1.1,
+      "rt60_max": 1.3,
+      "s_panel_nominal": 21.466666666666665,
+      "s_panel_min": 14.343636363636364,
+      "s_panel_max": 28.98
+    },
+    "exact": {
+      "volume_nominal": 60.0,
+      "volume_min": 60.0,
+      "volume_max": 60.0,
+      "rt60_mean": 1.2,
+      "rt60_min": 1.1,
+      "rt60_max": 1.3,
+      "s_panel_nominal": 21.466666666666665,
+      "s_panel_min": 20.49090909090909,
+      "s_panel_max": 22.29230769230769
+    }
+  },
+  "guards": {
+    "target_met": {
+      "ratio": 0.8749999999999999,
+      "target_met": true,
+      "a_now": 27.6,
+      "a_target": 24.15,
+      "delta_a": -3.450000000000003,
+      "s_panel": 0.0,
+      "net_alpha": 0.75,
+      "guard_reason": "target_met_or_no_absorption_needed"
+    },
+    "alpha_lower": {
+      "ratio": 2.9999999999999996,
+      "target_met": false,
+      "a_now": 8.05,
+      "a_target": 24.15,
+      "delta_a": 16.099999999999998,
+      "s_panel": "Infinity",
+      "net_alpha": -0.010000000000000002,
+      "guard_reason": "material_alpha_le_existing"
+    },
+    "alpha_equal": {
+      "ratio": 2.9999999999999996,
+      "target_met": false,
+      "a_now": 8.05,
+      "a_target": 24.15,
+      "delta_a": 16.099999999999998,
+      "s_panel": "Infinity",
+      "net_alpha": 0.0,
+      "guard_reason": "material_alpha_le_existing"
+    },
+    "area_exceeded": {
+      "required_panel_area": 85.0,
+      "wall_ceiling_area": 74.0,
+      "exceeds": true
+    }
+  },
+  "hotspot": {
+    "values": [
+      0.45,
+      0.5,
+      0.52,
+      0.55,
+      0.6,
+      0.62,
+      0.7,
+      0.75,
+      0.8,
+      0.95,
+      1.1,
+      1.25
+    ],
+    "q3_threshold": 0.8375000000000001
+  }
+}

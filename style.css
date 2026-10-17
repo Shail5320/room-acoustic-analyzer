@@ -1193,8 +1193,9 @@ details[open] .dimensions-summary::after {
   gap: 8px;
 }
 
-.slider-rt60 {
-  width: 90px;
+.slider-rt60,
+.slider-noise {
+  width: 80px;
   accent-color: var(--primary-color);
 }
 
@@ -1461,6 +1462,314 @@ details[open] .dimensions-summary::after {
   color: #10b981;
   font-weight: 700;
   font-size: 0.85rem;
+}
+
+/* ==========================================================================
+   Phase 6: Treatment Calculator & Placement Hint Styles
+   ========================================================================== */
+
+.heatmap-hotspot-caption {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+  font-style: italic;
+}
+
+.treatment-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.treatment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 12px;
+}
+
+.treatment-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.treatment-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.treatment-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.data-status-line {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.treatment-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.section-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.section-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.treatment-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flex-1 {
+  flex: 1;
+  min-width: 220px;
+}
+
+.flex-initial {
+  flex: 0 0 auto;
+}
+
+.source-citation-badge {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  background-color: var(--bg-color);
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.citation-label {
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.target-manual-container,
+.custom-material-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  margin-top: 8px;
+}
+
+.per-band-targets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 8px;
+}
+
+.band-input-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.band-input-col label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.form-input-sm {
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.material-notice {
+  padding: 8px 12px;
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+
+.custom-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.custom-desc-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.field-custom-source {
+  margin-top: 4px;
+}
+
+/* Alert Boxes for Guards */
+.alert-box {
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  font-weight: 500;
+}
+
+.alert-success {
+  background-color: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #059669;
+}
+
+.alert-danger {
+  background-color: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #dc2626;
+}
+
+.alert-warning {
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #d97706;
+}
+
+/* Headline Box */
+.treatment-headline-box {
+  padding: 16px 20px;
+  background: linear-gradient(135deg, rgba(0, 99, 153, 0.08), rgba(0, 99, 153, 0.02));
+  border: 1px solid var(--primary-color);
+  border-radius: 10px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.headline-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.headline-val {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--primary-color);
+  line-height: 1.1;
+}
+
+.headline-range {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.headline-uncertainty {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Low Frequency Box */
+.low-freq-box {
+  padding: 12px 14px;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  border-left: 4px solid #38bdf8;
+  border-top: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.low-freq-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.low-freq-text {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.no-dim-prompt {
+  padding: 14px;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  border: 1px dashed var(--border-color);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+/* Limitations Card */
+.limitations-card {
+  padding: 16px;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.limitations-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.limitations-list {
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
 }
 
 

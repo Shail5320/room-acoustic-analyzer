@@ -63,19 +63,26 @@ export function boxMuller(rng) {
 }
 
 /**
- * Synthesize a simulated room recording for a given target RT60.
+ * Synthesize a simulated room recording for a given target RT60 and optional noise.
+ *
+ * Noise control definition:
+ * noiseLevelDb specifies the background noise RMS relative to the peak amplitude of the recording:
+ *   noiseSigma = recPeak * 10^(noiseLevelDb / 20)
+ * where noiseLevelDb <= -40 or null/omitted corresponds to clean audio (no added noise).
  *
  * @param {object} [options]
  * @param {number} [options.rtTarget=0.8]   — Target reverberation time in seconds [0.3, 1.5]
  * @param {number} [options.sampleRate=48000]
- * @param {number} [options.seed=42]
- * @param {boolean} [options.addNoise=false]
- * @param {number} [options.snrDb=50]
+ * @param {number} [options.seed]
+ * @param {number|null} [options.noiseLevelDb=null] — Noise RMS relative to response peak in dB (e.g. -25, -18, -12, -6, 0)
+ * @param {boolean} [options.addNoise=false] — Backward compatibility flag
+ * @param {number} [options.snrDb]          — Backward compatibility SNR parameter
  * @returns {{
  *   samples: Float32Array,
  *   sampleRate: number,
  *   rtTarget: number,
  *   seed: number,
+ *   noiseLevelDb: number|null,
  *   simulated: boolean
  * }}
  */
@@ -83,8 +90,13 @@ export function simulateRoomRecording(options = {}) {
   const rtTarget = Math.max(0.3, Math.min(1.5, Number(options.rtTarget) || 0.8));
   const sampleRate = options.sampleRate || 48000;
   const seed = options.seed != null ? options.seed : (1000 + Math.round(rtTarget * 100));
-  const addNoise = Boolean(options.addNoise);
-  const snrDb = options.snrDb || 50;
+
+  let noiseLevelDb = null;
+  if (options.noiseLevelDb != null && Number.isFinite(Number(options.noiseLevelDb))) {
+    noiseLevelDb = Number(options.noiseLevelDb);
+  } else if (options.addNoise) {
+    noiseLevelDb = options.snrDb != null ? -options.snrDb : -20;
+  }
 
   const rng = createMulberry32(seed);
 
@@ -131,14 +143,14 @@ export function simulateRoomRecording(options = {}) {
     samples[leadSamples + i] = recRaw[i];
   }
 
-  // Optional background noise
-  if (addNoise) {
+  // 5. Add background noise relative to response peak
+  if (noiseLevelDb != null && Number.isFinite(noiseLevelDb)) {
     let recPeak = 0;
     for (let i = 0; i < samples.length; i++) {
       const a = Math.abs(samples[i]);
       if (a > recPeak) recPeak = a;
     }
-    const noiseSigma = recPeak * Math.pow(10, -snrDb / 20.0);
+    const noiseSigma = recPeak * Math.pow(10, noiseLevelDb / 20.0);
     for (let i = 0; i < samples.length; i++) {
       samples[i] += boxMuller(rng) * noiseSigma;
     }
@@ -149,6 +161,7 @@ export function simulateRoomRecording(options = {}) {
     sampleRate,
     rtTarget,
     seed,
+    noiseLevelDb,
     simulated: true,
   };
 }
@@ -158,14 +171,15 @@ export function simulateRoomRecording(options = {}) {
  *
  * @param {object} [options]
  * @param {number} [options.rtTarget=0.8]
- * @param {number} [options.seed=42]
+ * @param {number} [options.seed]
+ * @param {number|null} [options.noiseLevelDb=null]
  * @param {boolean} [options.addNoise=false]
  * @param {number} [options.snrDb=50]
  * @param {Function} [options.onProgress]
  * @returns {Promise<object>} — Pipeline result augmented with self-test flags and validation
  */
 export async function runSelfTest(options = {}) {
-  const { samples, sampleRate, rtTarget, seed } = simulateRoomRecording(options);
+  const { samples, sampleRate, rtTarget, seed, noiseLevelDb } = simulateRoomRecording(options);
 
   const result = await runAnalysis(samples, sampleRate, options.onProgress);
 
@@ -192,5 +206,6 @@ export async function runSelfTest(options = {}) {
     tolerances: bounds,
     passed,
     seed,
+    noiseLevelDb,
   };
 }

@@ -44,8 +44,18 @@ import { renderHeatmapLegendCanvas } from './heatmap.js';
 import { loadAudioFile } from '../audio/wav.js';
 import { downloadSweepWav } from '../audio/sweep-wav.js';
 import { runSelfTest } from '../analysis/selftest.js';
-import { runAnalysis } from '../analysis/run.js';
 import { formatDecibels } from './format.js';
+import {
+  aggregateSessionBands,
+  calculateBandTreatment,
+  computeTreatmentHeadline,
+  evaluateHotspot,
+  LOW_FREQ_CAVEAT,
+  HOTSPOT_UNIFORM_MESSAGE,
+  HOTSPOT_CAPTION,
+  SPEECH_MUSIC_BANDS,
+} from '../analysis/treatment.js';
+import { roomGeometry } from '../dsp/sabine.js';
 
 export async function initApp() {
   const canvas = document.getElementById('floorplan-canvas');
@@ -123,6 +133,8 @@ export async function initApp() {
   const selectedFileNameEl = document.getElementById('selected-file-name');
   const sliderSelftestRt60 = document.getElementById('slider-selftest-rt60');
   const selftestRtVal = document.getElementById('selftest-rt-val');
+  const sliderSelftestNoise = document.getElementById('slider-selftest-noise');
+  const selftestNoiseVal = document.getElementById('selftest-noise-val');
   const btnRunSelftest = document.getElementById('btn-run-selftest');
   const analyzeProgressContainer = document.getElementById('analyze-progress-container');
   const analyzeProgressBar = document.getElementById('analyze-progress-bar');
@@ -148,15 +160,163 @@ export async function initApp() {
   const btnAttachToPoint = document.getElementById('btn-attach-to-point');
   const attachSuccessMsg = document.getElementById('attach-success-msg');
 
+  // DOM Elements - Phase 6 Treatment Calculator
+  const treatmentDataStatusEl = document.getElementById('treatment-data-status');
+  const checkIncludeSimulated = document.getElementById('check-include-simulated');
+  const treatmentSimulatedBanner = document.getElementById('treatment-simulated-banner');
+  const selectTargetPreset = document.getElementById('select-target-preset');
+  const btnTargetModePreset = document.getElementById('btn-target-mode-preset');
+  const btnTargetModeManual = document.getElementById('btn-target-mode-manual');
+  const targetPresetSourceText = document.getElementById('target-preset-source-text');
+  const targetManualContainer = document.getElementById('target-manual-container');
+  const checkPerBandTargets = document.getElementById('check-per-band-targets');
+  const singleTargetRow = document.getElementById('single-target-row');
+  const inputManualTargetAll = document.getElementById('input-manual-target-all');
+  const perBandTargetsGrid = document.getElementById('per-band-targets-grid');
+  const selectMaterial = document.getElementById('select-material');
+  const inputExistingAlpha = document.getElementById('input-existing-alpha');
+  const materialNoticeBanner = document.getElementById('material-notice-banner');
+  const customMaterialContainer = document.getElementById('custom-material-container');
+  const inputCustomMatSource = document.getElementById('input-custom-mat-source');
+  const alertTargetMet = document.getElementById('alert-target-met');
+  const alertAlphaIneffective = document.getElementById('alert-alpha-ineffective');
+  const alertAreaExceeded = document.getElementById('alert-area-exceeded');
+  const treatmentPrimaryTbody = document.getElementById('treatment-primary-tbody');
+  const treatmentPhysicalSection = document.getElementById('treatment-physical-section');
+  const treatmentPhysicalTbody = document.getElementById('treatment-physical-tbody');
+  const treatmentNoDimPrompt = document.getElementById('treatment-no-dim-prompt');
+  const treatmentHeadlineBox = document.getElementById('treatment-headline-box');
+  const treatmentHeadlineVal = document.getElementById('treatment-headline-val');
+  const treatmentHeadlineRange = document.getElementById('treatment-headline-range');
+  const treatmentHeadlineUncertainty = document.getElementById('treatment-headline-uncertainty');
+  const textLowFreqCaveat = document.getElementById('text-low-freq-caveat');
+  const btnToggleHotspot = document.getElementById('btn-toggle-hotspot');
+  const heatmapHotspotCaption = document.getElementById('heatmap-hotspot-caption');
+
   let currentUnit = 'metres'; // 'metres' | 'steps'
   let isAspectLockedToDimensions = false;
   let currentMode = 'measure'; // 'measure' | 'source' | 'heatmap'
   let heatmapRangeMode = 'auto'; // 'auto' | 'fixed'
+  let placementHintActive = false;
 
   // Analysis State
   let currentAnalysisResult = null;
   let currentAudioContext = null;
   let lastLoadedAudio = null;
+
+  // Phase 6 Treatment State
+  let includeSimulatedTreatment = false;
+  let targetMode = 'preset'; // 'preset' | 'manual'
+  let selectedPresetId = 'small_control_room';
+  let manualTargetAll = 0.40;
+  let manualPerBandTargets = { 125: 0.40, 250: 0.35, 500: 0.35, 1000: 0.35, 2000: 0.35, 4000: 0.35 };
+  let isCustomPerBandTarget = false;
+  let selectedMaterialId = 'fiberglass_50mm';
+  let existingAlpha = 0.05;
+  let customMaterial = {
+    id: 'custom',
+    name: 'Custom Material (User-Entered)',
+    placeholder: false,
+    source: 'User-entered custom material',
+    alpha: { 125: 0.20, 250: 0.50, 500: 0.80, 1000: 0.85, 2000: 0.85, 4000: 0.80 },
+  };
+
+  const FALLBACK_TARGET_PRESETS = [
+    {
+      id: 'small_control_room',
+      name: 'Small Control Room / Mixing Studio',
+      targetRt60: 0.35,
+      perBandTargets: { 125: 0.40, 250: 0.35, 500: 0.35, 1000: 0.35, 2000: 0.35, 4000: 0.35 },
+      description: 'Critical listening and stereo mixing environment for small production control rooms.',
+      source: 'EBU Tech 3276 (Listening conditions for sound programme in broadcasting, 2nd ed., 1998)',
+    },
+    {
+      id: 'vocal_booth',
+      name: 'Vocal / Voiceover Booth',
+      targetRt60: 0.25,
+      perBandTargets: { 125: 0.30, 250: 0.25, 500: 0.25, 1000: 0.25, 2000: 0.25, 4000: 0.25 },
+      description: 'Controlled dead environment for dry speech and vocal tracking with minimal room reflections.',
+      source: 'rule of thumb',
+    },
+    {
+      id: 'live_room',
+      name: 'Live Room / Tracking Room',
+      targetRt60: 0.70,
+      perBandTargets: { 125: 0.80, 250: 0.75, 500: 0.70, 1000: 0.70, 2000: 0.65, 4000: 0.60 },
+      description: 'Natural, controlled acoustic ambience for acoustic instruments, ensembles, and drums.',
+      source: 'rule of thumb',
+    },
+    {
+      id: 'podcast_studio',
+      name: 'Podcast / Broadcast Voice Studio',
+      targetRt60: 0.30,
+      perBandTargets: { 125: 0.35, 250: 0.30, 500: 0.30, 1000: 0.30, 2000: 0.30, 4000: 0.28 },
+      description: 'Controlled speech clarity optimized for podcasting and multi-microphone interviews.',
+      source: 'rule of thumb',
+    },
+    {
+      id: 'classroom',
+      name: 'Classroom / Core Learning Space (< 283 m³)',
+      targetRt60: 0.60,
+      perBandTargets: { 125: 0.60, 250: 0.60, 500: 0.60, 1000: 0.60, 2000: 0.60, 4000: 0.60 },
+      description: 'Standard unoccupied educational learning space maximizing speech intelligibility.',
+      source: 'ANSI/ASA S12.60-2010 (Acoustical Performance Criteria, Design Requirements, and Guidelines for Schools, Part 1, Section 5.2.3.1)',
+    },
+    {
+      id: 'home_theater',
+      name: 'Home Theater / Multi-Channel Listening',
+      targetRt60: 0.40,
+      perBandTargets: { 125: 0.45, 250: 0.40, 500: 0.40, 1000: 0.40, 2000: 0.38, 4000: 0.35 },
+      description: 'Immersive surround sound listening room balancing dialogue clarity and sound effects.',
+      source: 'rule of thumb',
+    },
+  ];
+
+  const FALLBACK_MATERIALS = [
+    {
+      id: 'fiberglass_50mm',
+      name: 'Rigid Fiberglass Panel (50 mm / 2″, 48 kg/m³)',
+      placeholder: true,
+      source: 'placeholder, verify with manufacturer datasheet',
+      thicknessMm: 50,
+      alpha: { 125: 0.25, 250: 0.65, 500: 0.95, 1000: 0.98, 2000: 0.95, 4000: 0.90 },
+    },
+    {
+      id: 'acoustic_foam_50mm',
+      name: 'Open-Cell Acoustic Foam Wedge (50 mm / 2″)',
+      placeholder: true,
+      source: 'placeholder, verify with manufacturer datasheet',
+      thicknessMm: 50,
+      alpha: { 125: 0.15, 250: 0.35, 500: 0.70, 1000: 0.90, 2000: 0.92, 4000: 0.88 },
+    },
+    {
+      id: 'fiberglass_100mm',
+      name: 'Deep Broadband Absorber (100 mm / 4″)',
+      placeholder: true,
+      source: 'placeholder, verify with manufacturer datasheet',
+      thicknessMm: 100,
+      alpha: { 125: 0.50, 250: 0.85, 500: 0.98, 1000: 0.99, 2000: 0.95, 4000: 0.92 },
+    },
+    {
+      id: 'heavy_drapery',
+      name: 'Heavy Acoustic Curtain (Velour 500 g/m², 100% fullness)',
+      placeholder: true,
+      source: 'placeholder, verify with manufacturer datasheet',
+      thicknessMm: 20,
+      alpha: { 125: 0.10, 250: 0.30, 500: 0.50, 1000: 0.70, 2000: 0.75, 4000: 0.70 },
+    },
+    {
+      id: 'wood_slat_panel',
+      name: 'Slotted Timber / Wood Slat Panel (over mineral wool)',
+      placeholder: true,
+      source: 'placeholder, verify with manufacturer datasheet',
+      thicknessMm: 60,
+      alpha: { 125: 0.30, 250: 0.70, 500: 0.85, 1000: 0.75, 2000: 0.55, 4000: 0.40 },
+    },
+  ];
+
+  let targetPresets = FALLBACK_TARGET_PRESETS;
+  let materialsList = FALLBACK_MATERIALS;
 
   // -------------------------------------------------------------
   // Helpers
@@ -450,6 +610,16 @@ export async function initApp() {
     });
   }
 
+  if (btnToggleHotspot) {
+    btnToggleHotspot.addEventListener('click', () => {
+      placementHintActive = !placementHintActive;
+      btnToggleHotspot.classList.toggle('active', placementHintActive);
+      btnToggleHotspot.setAttribute('aria-pressed', String(placementHintActive));
+      view.setPlacementHint(placementHintActive);
+      updateHeatmapUI();
+    });
+  }
+
   if (btnCloseMarkerDetail) {
     btnCloseMarkerDetail.addEventListener('click', () => {
       model.selectPoint(null);
@@ -477,6 +647,21 @@ export async function initApp() {
     const hasFake = usablePoints.some((p) => p.fake === true || p.simulated === true || p.source === 'selftest' || p.source === 'dev');
     if (heatmapDevBanner) {
       heatmapDevBanner.hidden = !hasFake;
+    }
+
+    // Hotspot Placement Hint Caption
+    if (heatmapHotspotCaption) {
+      if (placementHintActive) {
+        heatmapHotspotCaption.hidden = false;
+        const hotspotRes = evaluateHotspot(usablePoints);
+        if (hotspotRes.hasHotspot) {
+          heatmapHotspotCaption.textContent = `🎯 Longest reverberation region (${activeBand} Hz): ${hotspotRes.caption}`;
+        } else {
+          heatmapHotspotCaption.textContent = `ℹ️ ${hotspotRes.message}`;
+        }
+      } else {
+        heatmapHotspotCaption.hidden = true;
+      }
     }
 
     // Marker detail inspector
@@ -1355,6 +1540,404 @@ export async function initApp() {
   }
 
   // -------------------------------------------------------------
+  // Phase 6: Treatment Calculator UI & Controller
+  // -------------------------------------------------------------
+
+  function populateTargetPresetsUI() {
+    if (!selectTargetPreset) return;
+    selectTargetPreset.innerHTML = '';
+    targetPresets.forEach((p) => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = `${p.name} (~${p.targetRt60} s)`;
+      if (p.id === selectedPresetId) opt.selected = true;
+      selectTargetPreset.appendChild(opt);
+    });
+    updateTargetPresetSourceUI();
+  }
+
+  function updateTargetPresetSourceUI() {
+    const p = targetPresets.find((item) => item.id === selectedPresetId) || targetPresets[0];
+    if (targetPresetSourceText && p) {
+      targetPresetSourceText.textContent = p.source;
+    }
+  }
+
+  function populateMaterialsUI() {
+    if (!selectMaterial) return;
+    selectMaterial.innerHTML = '';
+    materialsList.forEach((m) => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = `${m.name} [placeholder]`;
+      if (m.id === selectedMaterialId) opt.selected = true;
+      selectMaterial.appendChild(opt);
+    });
+
+    const customOpt = document.createElement('option');
+    customOpt.value = 'custom';
+    customOpt.textContent = '✨ Custom material (user-entered α)';
+    if (selectedMaterialId === 'custom') customOpt.selected = true;
+    selectMaterial.appendChild(customOpt);
+  }
+
+  // Target preset select event
+  if (selectTargetPreset) {
+    selectTargetPreset.addEventListener('change', () => {
+      selectedPresetId = selectTargetPreset.value;
+      updateTargetPresetSourceUI();
+      updateTreatmentUI();
+    });
+  }
+
+  // Target mode toggle: preset vs manual
+  if (btnTargetModePreset) {
+    btnTargetModePreset.addEventListener('click', () => {
+      targetMode = 'preset';
+      btnTargetModePreset.classList.add('active');
+      btnTargetModePreset.setAttribute('aria-pressed', 'true');
+      if (btnTargetModeManual) {
+        btnTargetModeManual.classList.remove('active');
+        btnTargetModeManual.setAttribute('aria-pressed', 'false');
+      }
+      if (targetManualContainer) targetManualContainer.hidden = true;
+      if (selectTargetPreset) selectTargetPreset.disabled = false;
+      updateTreatmentUI();
+    });
+  }
+
+  if (btnTargetModeManual) {
+    btnTargetModeManual.addEventListener('click', () => {
+      targetMode = 'manual';
+      btnTargetModeManual.classList.add('active');
+      btnTargetModeManual.setAttribute('aria-pressed', 'true');
+      if (btnTargetModePreset) {
+        btnTargetModePreset.classList.remove('active');
+        btnTargetModePreset.setAttribute('aria-pressed', 'false');
+      }
+      if (targetManualContainer) targetManualContainer.hidden = false;
+      if (selectTargetPreset) selectTargetPreset.disabled = true;
+      updateTreatmentUI();
+    });
+  }
+
+  // Custom per-band target checkbox
+  if (checkPerBandTargets) {
+    checkPerBandTargets.addEventListener('change', () => {
+      isCustomPerBandTarget = checkPerBandTargets.checked;
+      if (singleTargetRow) singleTargetRow.hidden = isCustomPerBandTarget;
+      if (perBandTargetsGrid) perBandTargetsGrid.hidden = !isCustomPerBandTarget;
+      updateTreatmentUI();
+    });
+  }
+
+  // Manual single target input
+  if (inputManualTargetAll) {
+    inputManualTargetAll.addEventListener('input', () => {
+      const val = parseFloat(inputManualTargetAll.value);
+      if (Number.isFinite(val) && val > 0) {
+        manualTargetAll = val;
+        updateTreatmentUI();
+      }
+    });
+  }
+
+  // Manual per-band inputs
+  OCTAVE_BANDS.forEach((band) => {
+    const el = document.getElementById(`input-target-${band}`);
+    if (el) {
+      el.addEventListener('input', () => {
+        const val = parseFloat(el.value);
+        if (Number.isFinite(val) && val > 0) {
+          manualPerBandTargets[band] = val;
+          updateTreatmentUI();
+        }
+      });
+    }
+  });
+
+  // Material select
+  if (selectMaterial) {
+    selectMaterial.addEventListener('change', () => {
+      selectedMaterialId = selectMaterial.value;
+      const isCustom = selectedMaterialId === 'custom';
+      if (customMaterialContainer) customMaterialContainer.hidden = !isCustom;
+      if (materialNoticeBanner) materialNoticeBanner.hidden = isCustom;
+      updateTreatmentUI();
+    });
+  }
+
+  // Custom material band inputs
+  OCTAVE_BANDS.forEach((band) => {
+    const el = document.getElementById(`input-mat-${band}`);
+    if (el) {
+      el.addEventListener('input', () => {
+        const val = parseFloat(el.value);
+        if (Number.isFinite(val) && val >= 0 && val <= 1) {
+          customMaterial.alpha[band] = val;
+          updateTreatmentUI();
+        }
+      });
+    }
+  });
+
+  if (inputCustomMatSource) {
+    inputCustomMatSource.addEventListener('input', () => {
+      customMaterial.source = inputCustomMatSource.value.trim() || 'User-entered custom material';
+    });
+  }
+
+  // Existing boundary alpha
+  if (inputExistingAlpha) {
+    inputExistingAlpha.addEventListener('input', () => {
+      const val = parseFloat(inputExistingAlpha.value);
+      if (Number.isFinite(val) && val >= 0 && val < 1) {
+        existingAlpha = val;
+        updateTreatmentUI();
+      }
+    });
+  }
+
+  // Include simulated data toggle
+  if (checkIncludeSimulated) {
+    checkIncludeSimulated.addEventListener('change', () => {
+      includeSimulatedTreatment = checkIncludeSimulated.checked;
+      updateTreatmentUI();
+    });
+  }
+
+  function updateTreatmentUI() {
+    const agg = aggregateSessionBands(model.measurements, { includeSimulated: includeSimulatedTreatment });
+    if (treatmentDataStatusEl) {
+      treatmentDataStatusEl.textContent = agg.dataStatus.statusLine;
+    }
+    if (treatmentSimulatedBanner) {
+      treatmentSimulatedBanner.hidden = !includeSimulatedTreatment;
+    }
+
+    // Determine current material
+    let currentMaterial = null;
+    if (selectedMaterialId === 'custom') {
+      currentMaterial = customMaterial;
+      if (materialNoticeBanner) materialNoticeBanner.hidden = true;
+    } else {
+      currentMaterial = materialsList.find((m) => m.id === selectedMaterialId) || materialsList[0];
+      if (materialNoticeBanner) materialNoticeBanner.hidden = false;
+    }
+
+    // Prepare room geometry if available
+    let geom = null;
+    let isSteps = false;
+    if (
+      model.roomDimensions &&
+      Number.isFinite(model.roomDimensions.lengthM) &&
+      Number.isFinite(model.roomDimensions.widthM) &&
+      Number.isFinite(model.roomDimensions.heightM) &&
+      model.roomDimensions.lengthM > 0 &&
+      model.roomDimensions.widthM > 0 &&
+      model.roomDimensions.heightM > 0
+    ) {
+      geom = roomGeometry(model.roomDimensions.lengthM, model.roomDimensions.widthM, model.roomDimensions.heightM);
+      isSteps = model.roomDimensions.unit === 'steps' || Boolean(model.roomDimensions.isApproximate);
+    }
+
+    const bandResults = {};
+    let allTargetsMet = true;
+    let anyUsableBand = false;
+    let materialIneffectiveMsg = null;
+    let areaExceededMsg = null;
+
+    for (const band of OCTAVE_BANDS) {
+      const bData = agg.bands[band];
+      let targetRt = manualTargetAll;
+      if (targetMode === 'preset') {
+        const preset = targetPresets.find((p) => p.id === selectedPresetId);
+        if (preset) {
+          targetRt = preset.perBandTargets && preset.perBandTargets[band] ? preset.perBandTargets[band] : preset.targetRt60;
+        }
+      } else if (isCustomPerBandTarget) {
+        targetRt = manualPerBandTargets[band] || 0.40;
+      }
+
+      const matAlpha = currentMaterial ? (currentMaterial.alpha[band] ?? 0.80) : 0.80;
+
+      const treat = calculateBandTreatment({
+        band,
+        meanRt60: bData.hasData ? bData.mean : NaN,
+        minRt60: bData.hasData ? bData.min : NaN,
+        maxRt60: bData.hasData ? bData.max : NaN,
+        targetRt60: targetRt,
+        materialAlpha: matAlpha,
+        existingAlpha,
+        geometry: geom,
+        isSteps,
+        hasApproximate: bData.hasApproximate,
+      });
+
+      bandResults[band] = treat;
+
+      if (bData.hasData) {
+        anyUsableBand = true;
+        if (!treat.primary.targetMet) {
+          allTargetsMet = false;
+        }
+        if (treat.guards.materialIneffective && !materialIneffectiveMsg) {
+          materialIneffectiveMsg = treat.guards.message;
+        }
+        if (treat.guards.areaExceeded && !areaExceededMsg) {
+          areaExceededMsg = treat.guards.message;
+        }
+      }
+    }
+
+    // Render Primary Table
+    if (treatmentPrimaryTbody) {
+      treatmentPrimaryTbody.innerHTML = '';
+      for (const band of OCTAVE_BANDS) {
+        const treat = bandResults[band];
+        const bData = agg.bands[band];
+        const tr = document.createElement('tr');
+
+        let measuredDisplay = '<span class="text-muted">Insufficient data</span>';
+        let ratioDisplay = '—';
+        let plainDisplay = '<span class="text-muted">No recommendation</span>';
+
+        if (bData.hasData) {
+          const spreadStr = bData.spread > 0 ? ` [${bData.min.toFixed(2)}–${bData.max.toFixed(2)}]` : '';
+          measuredDisplay = `<strong>${bData.mean.toFixed(2)} s</strong>${spreadStr}`;
+          if (bData.hasApproximate) {
+            measuredDisplay += ` <span class="badge badge-approx" title="Band contains approximate-tier measurement">≈ approx</span>`;
+          }
+
+          ratioDisplay = `<strong>${treat.primary.ratio.toFixed(2)}</strong>`;
+          if (treat.primary.targetMet) {
+            plainDisplay = `<span style="color:#10b981; font-weight:600;">✓ ${treat.primary.plainLanguage}</span>`;
+          } else {
+            plainDisplay = `<span style="color:#d97706; font-weight:600;">${treat.primary.plainLanguage}</span>`;
+          }
+        }
+
+        tr.innerHTML = `
+          <td><strong>${band} Hz</strong></td>
+          <td>${measuredDisplay}</td>
+          <td>${treat.targetRt60.toFixed(2)} s</td>
+          <td>${ratioDisplay}</td>
+          <td>${plainDisplay}</td>
+        `;
+        treatmentPrimaryTbody.appendChild(tr);
+      }
+    }
+
+    // Physical Section & Headline
+    if (geom) {
+      if (treatmentPhysicalSection) treatmentPhysicalSection.hidden = false;
+      if (treatmentNoDimPrompt) treatmentNoDimPrompt.hidden = true;
+
+      const headline = computeTreatmentHeadline(bandResults);
+      if (treatmentHeadlineBox) {
+        if (headline.hasData && Number.isFinite(headline.headlineAreaNominal)) {
+          treatmentHeadlineBox.hidden = false;
+          treatmentHeadlineVal.textContent = headline.headlineAreaNominal === 0 ? '0 m² (target met)' : `~${headline.headlineAreaNominal.toFixed(1)} m²`;
+          treatmentHeadlineRange.textContent = headline.headlineAreaNominal === 0 ? 'Target met across speech & music bands' : `Expected Range: ${headline.headlineAreaMin.toFixed(1)} – ${headline.headlineAreaMax.toFixed(1)} m²`;
+          treatmentHeadlineUncertainty.textContent = isSteps
+            ? 'Propagating measured RT60 spread and ~30% volume uncertainty from step-count paces'
+            : 'Propagating measured RT60 spread across room measurement points';
+        } else {
+          treatmentHeadlineBox.hidden = true;
+        }
+      }
+
+      if (treatmentPhysicalTbody) {
+        treatmentPhysicalTbody.innerHTML = '';
+        for (const band of OCTAVE_BANDS) {
+          const treat = bandResults[band];
+          const bData = agg.bands[band];
+          const tr = document.createElement('tr');
+
+          if (!bData.hasData || !treat.sabine) {
+            tr.innerHTML = `
+              <td><strong>${band} Hz</strong></td>
+              <td colspan="5" class="text-muted">Insufficient data for this band</td>
+            `;
+          } else {
+            let sabineAreaStr = `${treat.sabine.sPanel.toFixed(1)} m²`;
+            if (treat.range && (treat.range.sPanelMin !== treat.sabine.sPanel || treat.range.sPanelMax !== treat.sabine.sPanel)) {
+              sabineAreaStr = `<strong>${treat.sabine.sPanel.toFixed(1)} m²</strong><br/><small class="text-muted">range: ${treat.range.sPanelMin.toFixed(1)}–${treat.range.sPanelMax.toFixed(1)} m²</small>`;
+            }
+
+            let eyringAreaStr = `${treat.eyring.sPanel.toFixed(1)} m²`;
+            if (treat.eyring.isDeadRoom) {
+              eyringAreaStr += ` <span class="badge badge-info" title="Mean absorption α_avg > 0.3; Eyring formula is physically more accurate">ᾱ > 0.3</span>`;
+            }
+
+            tr.innerHTML = `
+              <td><strong>${band} Hz</strong></td>
+              <td>${treat.sabine.aNow.toFixed(1)}</td>
+              <td>${treat.sabine.aTarget.toFixed(1)}</td>
+              <td>${treat.sabine.deltaA.toFixed(1)}</td>
+              <td>${sabineAreaStr}</td>
+              <td>${eyringAreaStr}</td>
+            `;
+          }
+          treatmentPhysicalTbody.appendChild(tr);
+        }
+      }
+
+      if (textLowFreqCaveat) {
+        textLowFreqCaveat.textContent = LOW_FREQ_CAVEAT;
+      }
+
+      // Guard Alerts
+      if (alertAlphaIneffective) {
+        alertAlphaIneffective.hidden = !materialIneffectiveMsg;
+        if (materialIneffectiveMsg) alertAlphaIneffective.textContent = `⚠️ ${materialIneffectiveMsg}`;
+      }
+
+      if (alertAreaExceeded) {
+        alertAreaExceeded.hidden = !areaExceededMsg;
+        if (areaExceededMsg) alertAreaExceeded.textContent = `⚠️ ${areaExceededMsg}`;
+      }
+
+      if (alertTargetMet) {
+        alertTargetMet.hidden = !(anyUsableBand && allTargetsMet && !materialIneffectiveMsg);
+      }
+    } else {
+      if (treatmentPhysicalSection) treatmentPhysicalSection.hidden = true;
+      if (treatmentNoDimPrompt) treatmentNoDimPrompt.hidden = false;
+      if (alertAlphaIneffective) alertAlphaIneffective.hidden = true;
+      if (alertAreaExceeded) alertAreaExceeded.hidden = true;
+      if (alertTargetMet) alertTargetMet.hidden = true;
+    }
+  }
+
+  // Load external JSON presets with fallbacks
+  async function loadDataFiles() {
+    try {
+      const [tRes, mRes] = await Promise.all([
+        fetch('./src/data/targets.json'),
+        fetch('./src/data/materials.json'),
+      ]);
+      if (tRes.ok) {
+        const tData = await tRes.json();
+        if (tData.presets && tData.presets.length > 0) {
+          targetPresets = tData.presets;
+        }
+      }
+      if (mRes.ok) {
+        const mData = await mRes.json();
+        if (mData.materials && mData.materials.length > 0) {
+          materialsList = mData.materials;
+        }
+      }
+    } catch (e) {
+      console.warn('Using built-in treatment presets:', e);
+    }
+    populateTargetPresetsUI();
+    populateMaterialsUI();
+    updateTreatmentUI();
+  }
+
+  // -------------------------------------------------------------
   // Subscribe to Model Updates
   // -------------------------------------------------------------
   model.subscribe(({ type }) => {
@@ -1362,6 +1945,7 @@ export async function initApp() {
       updateBandSelectorUI(model.activeBand);
       updateHeatmapUI();
       renderMeasurementList();
+      updateTreatmentUI();
     } else if (type === 'point_selected') {
       updateHeatmapUI();
       renderMeasurementList();
@@ -1372,12 +1956,14 @@ export async function initApp() {
       updateHeatmapUI();
       renderMeasurementList();
       populateAttachPointSelect();
+      updateTreatmentUI();
     } else {
       updateFakeWarningUI();
       updateBandSelectorUI(model.activeBand);
       updateHeatmapUI();
       renderMeasurementList();
       populateAttachPointSelect();
+      updateTreatmentUI();
       scheduleAutoSave();
     }
   });
@@ -1431,6 +2017,7 @@ export async function initApp() {
   drawEdcPlot(canvasEdcPlot, null);
   updateFakeWarningUI();
   updateHeatmapUI();
+  loadDataFiles();
 }
 
 if (document.readyState === 'loading') {

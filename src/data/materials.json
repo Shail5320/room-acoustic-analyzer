@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "description": "Absorption coefficients (alpha) per octave band for acoustic treatment panels. All presets are placeholder entries pending laboratory certification.",
+  "notice": "All material coefficients in this dataset are placeholders. Before purchasing or installing materials, verify absorption coefficients with manufacturer ISO 354 or ASTM C423 test reports.",
+  "materials": [
+    {
+      "id": "fiberglass_50mm",
+      "name": "Rigid Fiberglass Panel (50 mm / 2″, 48 kg/m³)",
+      "placeholder": true,
+      "source": "placeholder, verify with manufacturer datasheet",
+      "thicknessMm": 50,
+      "alpha": {
+        "125": 0.25,
+        "250": 0.65,
+        "500": 0.95,
+        "1000": 0.98,
+        "2000": 0.95,
+        "4000": 0.90
+      }
+    },
+    {
+      "id": "acoustic_foam_50mm",
+      "name": "Open-Cell Acoustic Foam Wedge (50 mm / 2″)",
+      "placeholder": true,
+      "source": "placeholder, verify with manufacturer datasheet",
+      "thicknessMm": 50,
+      "alpha": {
+        "125": 0.15,
+        "250": 0.35,
+        "500": 0.70,
+        "1000": 0.90,
+        "2000": 0.92,
+        "4000": 0.88
+      }
+    },
+    {
+      "id": "fiberglass_100mm",
+      "name": "Deep Broadband Absorber (100 mm / 4″)",
+      "placeholder": true,
+      "source": "placeholder, verify with manufacturer datasheet",
+      "thicknessMm": 100,
+      "alpha": {
+        "125": 0.50,
+        "250": 0.85,
+        "500": 0.98,
+        "1000": 0.99,
+        "2000": 0.95,
+        "4000": 0.92
+      }
+    },
+    {
+      "id": "heavy_drapery",
+      "name": "Heavy Acoustic Curtain (Velour 500 g/m², 100% fullness)",
+      "placeholder": true,
+      "source": "placeholder, verify with manufacturer datasheet",
+      "thicknessMm": 20,
+      "alpha": {
+        "125": 0.10,
+        "250": 0.30,
+        "500": 0.50,
+        "1000": 0.70,
+        "2000": 0.75,
+        "4000": 0.70
+      }
+    },
+    {
+      "id": "wood_slat_panel",
+      "name": "Slotted Timber / Wood Slat Panel (over mineral wool)",
+      "placeholder": true,
+      "source": "placeholder, verify with manufacturer datasheet",
+      "thicknessMm": 60,
+      "alpha": {
+        "125": 0.30,
+        "250": 0.70,
+        "500": 0.85,
+        "1000": 0.75,
+        "2000": 0.55,
+        "4000": 0.40
+      }
+    }
+  ]
+}

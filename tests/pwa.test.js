@@ -156,6 +156,7 @@ test('Phase 1 - Subpath HTTP server integration test', async () => {
       if (filePath.endsWith('.html')) contentType = 'text/html';
       else if (filePath.endsWith('.css')) contentType = 'text/css';
       else if (filePath.endsWith('.js')) contentType = 'application/javascript';
+      else if (filePath.endsWith('.json')) contentType = 'application/json';
       else if (filePath.endsWith('.webmanifest')) contentType = 'application/manifest+json';
       else if (filePath.endsWith('.png')) contentType = 'image/png';
       res.writeHead(200, { 'Content-Type': contentType });
@@ -177,6 +178,8 @@ test('Phase 1 - Subpath HTTP server integration test', async () => {
     `http://127.0.0.1:${port}/room-acoustic-analyzer/sw.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/icons/icon-192.png`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/icons/icon-512.png`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/data/targets.json`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/data/materials.json`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/coordinates.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/session-model.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/floorplan.js`,
@@ -192,6 +195,7 @@ test('Phase 1 - Subpath HTTP server integration test', async () => {
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/worker.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/run.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/selftest.js`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/treatment.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/audio/wav.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/audio/sweep-wav.js`
   ];

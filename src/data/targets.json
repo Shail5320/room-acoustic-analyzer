@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "description": "Room reverberation target presets (RT60) with verifiable citations or rule-of-thumb attribution.",
+  "presets": [
+    {
+      "id": "small_control_room",
+      "name": "Small Control Room / Mixing Studio",
+      "targetRt60": 0.35,
+      "perBandTargets": {
+        "125": 0.40,
+        "250": 0.35,
+        "500": 0.35,
+        "1000": 0.35,
+        "2000": 0.35,
+        "4000": 0.35
+      },
+      "description": "Critical listening and stereo mixing environment for small production control rooms.",
+      "source": "EBU Tech 3276 (Listening conditions for sound programme in broadcasting, 2nd ed., 1998)"
+    },
+    {
+      "id": "vocal_booth",
+      "name": "Vocal / Voiceover Booth",
+      "targetRt60": 0.25,
+      "perBandTargets": {
+        "125": 0.30,
+        "250": 0.25,
+        "500": 0.25,
+        "1000": 0.25,
+        "2000": 0.25,
+        "4000": 0.25
+      },
+      "description": "Controlled dead environment for dry speech and vocal tracking with minimal room reflections.",
+      "source": "rule of thumb"
+    },
+    {
+      "id": "live_room",
+      "name": "Live Room / Tracking Room",
+      "targetRt60": 0.70,
+      "perBandTargets": {
+        "125": 0.80,
+        "250": 0.75,
+        "500": 0.70,
+        "1000": 0.70,
+        "2000": 0.65,
+        "4000": 0.60
+      },
+      "description": "Natural, controlled acoustic ambience for acoustic instruments, ensembles, and drums.",
+      "source": "rule of thumb"
+    },
+    {
+      "id": "podcast_studio",
+      "name": "Podcast / Broadcast Voice Studio",
+      "targetRt60": 0.30,
+      "perBandTargets": {
+        "125": 0.35,
+        "250": 0.30,
+        "500": 0.30,
+        "1000": 0.30,
+        "2000": 0.30,
+        "4000": 0.28
+      },
+      "description": "Controlled speech clarity optimized for podcasting and multi-microphone interviews.",
+      "source": "rule of thumb"
+    },
+    {
+      "id": "classroom",
+      "name": "Classroom / Core Learning Space (< 283 m³)",
+      "targetRt60": 0.60,
+      "perBandTargets": {
+        "125": 0.60,
+        "250": 0.60,
+        "500": 0.60,
+        "1000": 0.60,
+        "2000": 0.60,
+        "4000": 0.60
+      },
+      "description": "Standard unoccupied educational learning space maximizing speech intelligibility.",
+      "source": "ANSI/ASA S12.60-2010 (Acoustical Performance Criteria, Design Requirements, and Guidelines for Schools, Part 1, Section 5.2.3.1)"
+    },
+    {
+      "id": "home_theater",
+      "name": "Home Theater / Multi-Channel Listening",
+      "targetRt60": 0.40,
+      "perBandTargets": {
+        "125": 0.45,
+        "250": 0.40,
+        "500": 0.40,
+        "1000": 0.40,
+        "2000": 0.38,
+        "4000": 0.35
+      },
+      "description": "Immersive surround sound listening room balancing dialogue clarity and sound effects.",
+      "source": "rule of thumb"
+    }
+  ]
+}

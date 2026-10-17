@@ -26,6 +26,24 @@ export const HEATMAP_CAPTION =
 export const DEV_DATA_BANNER =
   'DEV DATA — contains simulated test measurements';
 
+import {
+  evaluateHotspot,
+  computePercentile,
+  MIN_HOTSPOT_POINTS,
+  HOTSPOT_SPREAD_RATIO,
+  HOTSPOT_UNIFORM_MESSAGE,
+  HOTSPOT_CAPTION,
+} from '../analysis/treatment.js';
+
+export {
+  evaluateHotspot,
+  computePercentile,
+  MIN_HOTSPOT_POINTS,
+  HOTSPOT_SPREAD_RATIO,
+  HOTSPOT_UNIFORM_MESSAGE,
+  HOTSPOT_CAPTION,
+};
+
 /**
  * Hardcoded Viridis-like color stops.
  * Perceptually uniform, monotonically increasing in perceived luminance, and colour-blind friendly.

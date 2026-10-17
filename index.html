@@ -219,8 +219,23 @@
                 step="0.1"
                 value="0.8"
                 class="slider-rt60"
+                title="Target RT60 (s)"
               />
-              <span id="selftest-rt-val" class="selftest-val-badge">0.8 s</span>
+              <span id="selftest-rt-val" class="selftest-val-badge" title="Target RT60">0.8 s</span>
+
+              <label for="slider-selftest-noise" class="visually-hidden">Noise level (dB relative to peak)</label>
+              <input
+                type="range"
+                id="slider-selftest-noise"
+                min="-40"
+                max="0"
+                step="5"
+                value="-40"
+                class="slider-noise"
+                title="Noise level relative to response peak (dB)"
+              />
+              <span id="selftest-noise-val" class="selftest-val-badge" title="Noise level relative to response peak">Clean</span>
+
               <button id="btn-run-selftest" class="btn btn-secondary btn-sm" type="button">
                 Run Simulation
               </button>
@@ -347,6 +362,9 @@
             <button id="btn-range-auto" class="btn-segment active" aria-pressed="true" type="button">Auto Range</button>
             <button id="btn-range-fixed" class="btn-segment" aria-pressed="false" type="button">Fixed 0–2s</button>
           </div>
+          <button id="btn-toggle-hotspot" class="btn btn-secondary btn-sm" type="button" aria-pressed="false">
+            🎯 Placement Hint
+          </button>
           <div class="marker-legend">
             <span class="legend-item"><span class="legend-symbol symbol-valid"></span> Valid</span>
             <span class="legend-item"><span class="legend-symbol symbol-approx"></span> Approx (≈)</span>
@@ -354,9 +372,287 @@
           </div>
         </div>
 
+        <div id="heatmap-hotspot-caption" class="heatmap-hotspot-caption" hidden></div>
+
         <div class="heatmap-legend-container">
           <canvas id="heatmap-legend-canvas" class="heatmap-legend-canvas" height="48"></canvas>
           <p class="heatmap-caption">Interpolated between measurement points; not a measurement.</p>
+        </div>
+      </section>
+
+      <!-- Phase 6: Treatment Calculator -->
+      <section id="treatment-card" class="card treatment-card">
+        <div class="treatment-header">
+          <div>
+            <h2 class="treatment-title">🎯 Treatment Calculator</h2>
+            <p class="treatment-subtitle">Dimensionless absorption ratio & optional physical treatment sizing</p>
+          </div>
+        </div>
+
+        <!-- Aggregation & Data Source Toolbar -->
+        <div class="treatment-toolbar">
+          <div id="treatment-data-status" class="data-status-line" aria-live="polite">
+            0 real points: 0 valid, 0 approximate
+          </div>
+          <label class="toggle-label" for="check-include-simulated">
+            <input type="checkbox" id="check-include-simulated" />
+            <span>Include simulated & dev data</span>
+          </label>
+        </div>
+
+        <div id="treatment-simulated-banner" class="fake-warning-banner" hidden>
+          ⚠️ SIMULATED / DEV DATA INCLUDED — Results include simulated or test measurements.
+        </div>
+
+        <!-- Target RT60 Section -->
+        <div class="treatment-section">
+          <h3 class="section-title">1. Target Reverberation Time (RT60)</h3>
+          
+          <div class="treatment-row">
+            <div class="field-group flex-1">
+              <label for="select-target-preset" class="form-label">Target Preset:</label>
+              <select id="select-target-preset" class="form-select"></select>
+            </div>
+            <div class="field-group flex-initial">
+              <label class="form-label">Mode:</label>
+              <div class="segmented-group" role="radiogroup" aria-label="Target Mode">
+                <button id="btn-target-mode-preset" class="btn-segment active" aria-pressed="true" type="button">Preset</button>
+                <button id="btn-target-mode-manual" class="btn-segment" aria-pressed="false" type="button">Manual</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="target-preset-source-box" class="source-citation-badge">
+            <span class="citation-label">Source:</span>
+            <span id="target-preset-source-text" class="citation-text">Loading...</span>
+          </div>
+
+          <!-- Manual Target RT60 Controls (Shown when Manual mode is active) -->
+          <div id="target-manual-container" class="target-manual-container" hidden>
+            <div class="manual-target-toggle-row">
+              <label class="toggle-label" for="check-per-band-targets">
+                <input type="checkbox" id="check-per-band-targets" />
+                <span>Custom per-band targets</span>
+              </label>
+            </div>
+
+            <div id="single-target-row" class="field-group">
+              <label for="input-manual-target-all" class="form-label">Target RT60 across all bands (s):</label>
+              <input
+                type="number"
+                id="input-manual-target-all"
+                class="form-input"
+                step="0.05"
+                min="0.10"
+                max="3.00"
+                value="0.40"
+              />
+            </div>
+
+            <div id="per-band-targets-grid" class="per-band-targets-grid" hidden>
+              <div class="band-input-col">
+                <label for="input-target-125">125 Hz</label>
+                <input type="number" id="input-target-125" class="form-input form-input-sm" step="0.05" min="0.1" max="3" value="0.40" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-target-250">250 Hz</label>
+                <input type="number" id="input-target-250" class="form-input form-input-sm" step="0.05" min="0.1" max="3" value="0.40" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-target-500">500 Hz</label>
+                <input type="number" id="input-target-500" class="form-input form-input-sm" step="0.05" min="0.1" max="3" value="0.40" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-target-1000">1 kHz</label>
+                <input type="number" id="input-target-1000" class="form-input form-input-sm" step="0.05" min="0.1" max="3" value="0.40" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-target-2000">2 kHz</label>
+                <input type="number" id="input-target-2000" class="form-input form-input-sm" step="0.05" min="0.1" max="3" value="0.40" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-target-4000">4 kHz</label>
+                <input type="number" id="input-target-4000" class="form-input form-input-sm" step="0.05" min="0.1" max="3" value="0.40" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Material Selection & Existing Surface Section -->
+        <div class="treatment-section">
+          <h3 class="section-title">2. Acoustic Material & Existing Boundary</h3>
+
+          <div class="treatment-row">
+            <div class="field-group flex-1">
+              <label for="select-material" class="form-label">Acoustic Absorber Material:</label>
+              <select id="select-material" class="form-select"></select>
+            </div>
+            <div class="field-group flex-initial">
+              <label for="input-existing-alpha" class="form-label">Existing Boundary α:</label>
+              <input
+                type="number"
+                id="input-existing-alpha"
+                class="form-input"
+                step="0.01"
+                min="0.01"
+                max="0.90"
+                value="0.05"
+                title="Absorption coefficient of existing bare surface being covered (painted drywall/concrete = 0.05)"
+              />
+            </div>
+          </div>
+
+          <div id="material-notice-banner" class="material-notice">
+            ⚠️ <strong>Placeholder coefficients</strong> — verify with manufacturer ISO 354 test report.
+          </div>
+
+          <!-- Custom Material Editor (Shown when "Custom Material" is selected) -->
+          <div id="custom-material-container" class="custom-material-container" hidden>
+            <div class="custom-header-row">
+              <span class="badge badge-approx">User-Entered</span>
+              <span class="custom-desc-label">Enter absorption coefficients (α) per octave band [0.0 – 1.0]:</span>
+            </div>
+            <div class="per-band-targets-grid">
+              <div class="band-input-col">
+                <label for="input-mat-125">125 Hz</label>
+                <input type="number" id="input-mat-125" class="form-input form-input-sm" step="0.05" min="0" max="1" value="0.20" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-mat-250">250 Hz</label>
+                <input type="number" id="input-mat-250" class="form-input form-input-sm" step="0.05" min="0" max="1" value="0.50" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-mat-500">500 Hz</label>
+                <input type="number" id="input-mat-500" class="form-input form-input-sm" step="0.05" min="0" max="1" value="0.80" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-mat-1000">1 kHz</label>
+                <input type="number" id="input-mat-1000" class="form-input form-input-sm" step="0.05" min="0" max="1" value="0.85" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-mat-2000">2 kHz</label>
+                <input type="number" id="input-mat-2000" class="form-input form-input-sm" step="0.05" min="0" max="1" value="0.85" />
+              </div>
+              <div class="band-input-col">
+                <label for="input-mat-4000">4 kHz</label>
+                <input type="number" id="input-mat-4000" class="form-input form-input-sm" step="0.05" min="0" max="1" value="0.80" />
+              </div>
+            </div>
+            <div class="field-group field-custom-source">
+              <label for="input-custom-mat-source" class="form-label">Material Source / Datasheet reference:</label>
+              <input
+                type="text"
+                id="input-custom-mat-source"
+                class="form-input"
+                placeholder="e.g. Manufacturer test report / lab certificate"
+                value="User-entered custom material"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Mathematical Guard Alert Banners -->
+        <div id="alert-target-met" class="alert-box alert-success" hidden>
+          ✓ Target reverberation met or exceeded across all usable bands. No extra absorption needed.
+        </div>
+        <div id="alert-alpha-ineffective" class="alert-box alert-danger" hidden></div>
+        <div id="alert-area-exceeded" class="alert-box alert-warning" hidden></div>
+
+        <!-- Primary Results: Dimensionless Absorption Ratio (Zero Dimensions Needed) -->
+        <div class="treatment-section">
+          <div class="results-header">
+            <h3 class="section-title">3. Primary Result: Absorption Ratio (No dimensions needed)</h3>
+            <span class="badge badge-info">Dimensionless</span>
+          </div>
+          <p class="section-hint">
+            The absorption ratio <code>RT60_measured / RT60_target</code> indicates the scaling factor required for room absorption.
+            Ratios &le; 1.0 indicate the target is met.
+          </p>
+
+          <div class="table-responsive">
+            <table class="table acoustic-table">
+              <thead>
+                <tr>
+                  <th>Band</th>
+                  <th>Measured RT60 (s)</th>
+                  <th>Target (s)</th>
+                  <th>Absorption Ratio</th>
+                  <th>Plain-Language Reading</th>
+                </tr>
+              </thead>
+              <tbody id="treatment-primary-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Optional Physical Treatment Results (When Room Dimensions Exist) -->
+        <div id="treatment-physical-section" class="treatment-section" hidden>
+          <div class="results-header">
+            <h3 class="section-title">4. Treatment Panel Sizing (Sabine & Eyring)</h3>
+            <span id="treatment-dim-badge" class="badge badge-dim-status">Dimensions provided</span>
+          </div>
+
+          <!-- Speech & Music Headline Area Callout (250 Hz – 4000 Hz) -->
+          <div id="treatment-headline-box" class="treatment-headline-box">
+            <div class="headline-label">Speech & Music Recommendation (250 Hz – 4 kHz)</div>
+            <div id="treatment-headline-val" class="headline-val">—</div>
+            <div id="treatment-headline-range" class="headline-range">Range: —</div>
+            <div id="treatment-headline-uncertainty" class="headline-uncertainty">
+              Propagating measured RT60 spread and room volume bounds.
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table acoustic-table">
+              <thead>
+                <tr>
+                  <th>Band</th>
+                  <th>A_now (m²)</th>
+                  <th>A_target (m²)</th>
+                  <th>ΔA needed (m²)</th>
+                  <th>Sabine Area (m²)</th>
+                  <th>Eyring Cross-Check (m²)</th>
+                </tr>
+              </thead>
+              <tbody id="treatment-physical-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- 125 Hz Low Frequency Caveat Box -->
+          <div class="low-freq-box">
+            <div class="low-freq-header">
+              <span class="low-freq-icon">ℹ️</span>
+              <strong>125 Hz Octave Band Caveat</strong>
+            </div>
+            <p id="text-low-freq-caveat" class="low-freq-text"></p>
+          </div>
+        </div>
+
+        <!-- If dimensions NOT provided prompt -->
+        <div id="treatment-no-dim-prompt" class="no-dim-prompt">
+          <p>
+            💡 <strong>Want panel area estimates in m²?</strong> Enter room dimensions (metres or pace steps) in the
+            <em>Room Dimensions</em> panel above. Sizing treatment panels requires room volume; dimensionless ratios above work without dimensions.
+          </p>
+        </div>
+
+        <!-- Limitations & Physical Assumptions Card -->
+        <div class="limitations-card">
+          <h4 class="limitations-title">Physical Assumptions & Acoustic Limitations</h4>
+          <ul class="limitations-list">
+            <li>
+              <strong>Diffuse Sound Field:</strong> Sabine and Eyring formulas assume a fully diffuse reverberant field. Small furnished rooms exhibit specular reflections and flutter echoes that deviate from statistical theory.
+            </li>
+            <li>
+              <strong>Room Modes (< 250 Hz):</strong> Below ~250 Hz, acoustic decay is dominated by modal resonances (standing waves) rather than statistical reverberation. Low-frequency absorption requires tuned membrane or Helmholtz bass traps, not thin porous panels.
+            </li>
+            <li>
+              <strong>Absorption is NOT Sound Insulation:</strong> Acoustic panels control internal room reflections, reverberation, and speech clarity. They do NOT prevent sound from escaping into adjacent rooms or block outside noise.
+            </li>
+            <li>
+              <strong>Placeholder Coefficients:</strong> All material coefficients in presets are placeholders. Verify manufacturer laboratory test reports (ISO 354 / ASTM C423) before purchasing materials.
+            </li>
+          </ul>
         </div>
       </section>
 
@@ -389,7 +685,7 @@
         <ul id="measurement-list" class="measurement-list"></ul>
       </section>
 
-      <section class="card quick-status" data-version="echomap-v8">
+      <section class="card quick-status" data-version="echomap-v9">
         <h3>System & PWA Status</h3>
         <dl class="status-list">
           <div>
@@ -406,7 +702,7 @@
           </div>
           <div>
             <dt>Build Version:</dt>
-            <dd id="status-version">v8 (echomap-v8)</dd>
+            <dd id="status-version">v9 (echomap-v9)</dd>
           </div>
         </dl>
       </section>

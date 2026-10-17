@@ -72,6 +72,11 @@ export class FloorPlanView {
     this.render();
   }
 
+  setPlacementHint(enabled) {
+    this.heatmapRenderer.setPlacementHint(enabled);
+    this.render();
+  }
+
   getHeatmapStatus() {
     return this.lastHeatmapStatus;
   }
