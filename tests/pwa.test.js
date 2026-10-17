@@ -16,6 +16,13 @@ test('Phase 1 - HTML App Shell integrity', () => {
   assert.match(content, /href=["']\.\/style\.css["']/, 'CSS link must be relative');
   assert.match(content, /navigator\.serviceWorker\.register\(['"]\.\/sw\.js['"]/, 'Service worker registration must use relative path');
   assert.match(content, /scope:\s*['"]\.\/['"]/, 'Service worker registration scope must be relative');
+
+  // Safe update UI banner and version indicator
+  assert.match(content, /id=["']update-banner["']/, 'Must contain update banner element');
+  assert.match(content, /New version available,\s*tap to reload/i, 'Banner must display update notification copy');
+  assert.match(content, /id=["']status-version["']/, 'Status panel must contain version number element');
+  assert.match(content, /controllerchange/, 'Must listen to controllerchange for reloading upon worker update');
+  assert.match(content, /skipWaiting/, 'Must post message to trigger skipWaiting on update tap');
 });
 
 test('Phase 1 - CSS Mobile-First and Themes', () => {
@@ -26,6 +33,7 @@ test('Phase 1 - CSS Mobile-First and Themes', () => {
   assert.match(content, /prefers-color-scheme:\s*dark/, 'Must support prefers-color-scheme: dark');
   assert.match(content, /min-height:\s*48px/, 'Touch targets must be at least 48px');
   assert.match(content, /min-width:\s*48px/, 'Touch targets must be at least 48px width');
+  assert.match(content, /\.update-banner/, 'Must include styles for update banner');
 });
 
 test('Phase 1 - Web App Manifest specification', () => {
@@ -68,7 +76,7 @@ test('Phase 1 - Icon binary format and dimensions', () => {
   verifyPng(path.join(rootDir, 'icons/icon-512.png'), 512, 512);
 });
 
-test('Phase 1 - Service Worker structure and precache asset check', () => {
+test('Phase 1 - Service Worker structure, safe update flow, and caching strategies', () => {
   const swPath = path.join(rootDir, 'sw.js');
   assert.ok(fs.existsSync(swPath), 'sw.js must exist');
   
@@ -76,7 +84,21 @@ test('Phase 1 - Service Worker structure and precache asset check', () => {
   assert.match(content, /const\s+CACHE_NAME\s*=\s*['"]echomap-v\d+['"]/, 'Must define versioned cache name');
   assert.match(content, /caches\.delete/, 'Must delete stale caches on activate');
   assert.match(content, /self\.clients\.claim\(\)/, 'Must claim clients on activate');
-  assert.match(content, /self\.skipWaiting\(\)/, 'Must skip waiting on install');
+
+  // Verify that blind skipWaiting is NOT present in install handler
+  const installHandlerMatch = content.match(/addEventListener\(['"]install['"],\s*(?:\([^)]*\)|[a-zA-Z0-9_$]+)\s*=>\s*\{([\s\S]*?)\}\s*\);/);
+  assert.ok(installHandlerMatch, 'Must have install event listener');
+  assert.doesNotMatch(installHandlerMatch[1], /self\.skipWaiting\(\)/, 'Install handler must not call self.skipWaiting() blindly');
+
+  // Verify message-based skipWaiting
+  assert.match(content, /addEventListener\(['"]message['"][\s\S]*self\.skipWaiting\(\)/, 'Must trigger skipWaiting in response to message');
+
+  // Verify network-first for index.html / navigation with cache fallback
+  assert.match(content, /isIndexHtmlRequest|request\.mode === ['"]navigate['"]/, 'Must detect navigation / index.html requests');
+  assert.match(content, /fetch\(event\.request\)[\s\S]*caches\.open\(CACHE_NAME\)[\s\S]*caches\.match/, 'Must implement network-first for index.html with cache fallback');
+
+  // Verify cache-first for other assets
+  assert.match(content, /caches\.match\(event\.request\)[\s\S]*fetch\(event\.request\)/, 'Must implement cache-first for other assets with network fallback');
 
   // Parse precache array
   const match = content.match(/const\s+PRECACHE_ASSETS\s*=\s*\[([\s\S]*?)\];/);

@@ -1,6 +1,6 @@
 // EchoMap Service Worker
 // Cache version identifier — update this when modifying cached assets
-const CACHE_NAME = 'echomap-v2';
+const CACHE_NAME = 'echomap-v3';
 
 // All paths are relative to support hosting under repository subpaths (e.g., GitHub Pages)
 const PRECACHE_ASSETS = [
@@ -17,6 +17,7 @@ const PRECACHE_ASSETS = [
 ];
 
 // Install: Pre-cache core app shell
+// Note: Do NOT call self.skipWaiting() here to avoid mixing old pages with new scripts.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -24,7 +25,6 @@ self.addEventListener('install', (event) => {
         console.log('[SW] Pre-caching app shell version:', CACHE_NAME);
         return cache.addAll(PRECACHE_ASSETS);
       })
-      .then(() => self.skipWaiting())
   );
 });
 
@@ -44,29 +44,79 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: Cache-first strategy for app shell assets with network fallback
+// Message listener: Safe update trigger invoked by user tap
+self.addEventListener('message', (event) => {
+  if (event.data && (event.data.action === 'skipWaiting' || event.data.type === 'SKIP_WAITING')) {
+    console.log('[SW] skipWaiting requested via message');
+    self.skipWaiting();
+  }
+});
+
+// Helper: Determine if request is for the HTML document / navigation
+function isIndexHtmlRequest(request) {
+  if (request.mode === 'navigate') {
+    return true;
+  }
+  try {
+    const url = new URL(request.url);
+    return (
+      url.pathname.endsWith('/index.html') ||
+      url.pathname.endsWith('/') ||
+      url.pathname === ''
+    );
+  } catch (err) {
+    return false;
+  }
+}
+
+// Fetch: Network-first for index.html (with cache fallback); Cache-first for other assets
 self.addEventListener('fetch', (event) => {
   // Only intercept GET requests
   if (event.request.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((networkResponse) => {
-        // Only cache valid basic same-origin responses
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+  if (isIndexHtmlRequest(event.request)) {
+    // Network-First with Cache Fallback for index.html
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
           return networkResponse;
+        })
+        .catch(() => {
+          return caches.match(event.request).then((cachedResponse) => {
+            if (cachedResponse) {
+              return cachedResponse;
+            }
+            return caches.match('./index.html');
+          });
+        })
+    );
+  } else {
+    // Cache-First with Network Fallback for static assets
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
+        return fetch(event.request).then((networkResponse) => {
+          // Only cache valid basic same-origin responses
+          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+            return networkResponse;
+          }
 
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+
+          return networkResponse;
         });
-
-        return networkResponse;
-      });
-    })
-  );
+      })
+    );
+  }
 });

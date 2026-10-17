@@ -81,7 +81,7 @@
         <ul id="measurement-list" class="measurement-list"></ul>
       </section>
 
-      <section class="card quick-status">
+      <section class="card quick-status" data-version="echomap-v3">
         <h3>System & PWA Status</h3>
         <dl class="status-list">
           <div>
@@ -96,23 +96,83 @@
             <dt>Display Mode:</dt>
             <dd id="status-display">Browser Tab</dd>
           </div>
+          <div>
+            <dt>Build Version:</dt>
+            <dd id="status-version">v3 (echomap-v3)</dd>
+          </div>
         </dl>
       </section>
     </main>
+
+    <!-- Safe SW Update Notification Banner -->
+    <aside id="update-banner" class="update-banner" role="alert" aria-live="assertive" hidden>
+      <div class="update-banner-content">
+        <span>New version available, tap to reload</span>
+        <button id="btn-update-reload" class="btn-update-reload" type="button">Reload</button>
+      </div>
+    </aside>
 
     <footer class="app-footer">
       <p>Course project for Linear Systems and Signal Processing</p>
     </footer>
 
     <script>
-      // Service Worker Registration with relative scope
+      // Service Worker Registration with relative scope & safe update flow
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
+          let refreshing = false;
+
+          // When a new SW takes control, reload so the page runs the new code
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!refreshing) {
+              refreshing = true;
+              window.location.reload();
+            }
+          });
+
+          function showUpdateBanner(worker) {
+            const banner = document.getElementById('update-banner');
+            if (!banner) return;
+            banner.hidden = false;
+
+            const triggerUpdate = () => {
+              worker.postMessage({ action: 'skipWaiting' });
+            };
+
+            banner.onclick = triggerUpdate;
+            const btn = document.getElementById('btn-update-reload');
+            if (btn) {
+              btn.onclick = (e) => {
+                e.stopPropagation();
+                triggerUpdate();
+              };
+            }
+          }
+
           navigator.serviceWorker.register('./sw.js', { scope: './' })
             .then((registration) => {
               console.log('SW registered successfully:', registration.scope);
               const swStatusEl = document.getElementById('status-sw');
               if (swStatusEl) swStatusEl.textContent = 'Active (cached)';
+
+              // If a worker is already waiting, show banner immediately
+              if (registration.waiting) {
+                showUpdateBanner(registration.waiting);
+                return;
+              }
+
+              // Detect when a new worker installs
+              registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                if (!newWorker) return;
+
+                newWorker.addEventListener('statechange', () => {
+                  // Only notify if there is already an active controller (i.e. update, not initial install)
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    showUpdateBanner(newWorker);
+                  }
+                });
+              });
             })
             .catch((error) => {
               console.error('SW registration failed:', error);
