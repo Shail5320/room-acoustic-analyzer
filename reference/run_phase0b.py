@@ -98,7 +98,7 @@ def run_phase0b():
         filters_meta[str(fc)] = {
             "centre_hz": fc,
             "edges_hz": [round(float(lo), 4), round(float(hi), 4)],
-            "sos": [[round(float(c), 12) for c in section] for section in sos],
+            "sos": [[float(c) for c in section] for section in sos],
             "diagnostic_responses": freq_resp_list
         }
         print(f"  Band {fc:4d} Hz: edges [{lo:6.1f}, {hi:6.1f}] Hz | Resp at fc: {mag_db[2]:+.2f} dB, lo: {mag_db[1]:+.2f} dB, hi: {mag_db[3]:+.2f} dB")
