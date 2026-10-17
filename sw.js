@@ -1,6 +1,6 @@
 // EchoMap Service Worker
 // Cache version identifier — update this when modifying cached assets
-const CACHE_NAME = 'echomap-v6';
+const CACHE_NAME = 'echomap-v7';
 
 // All paths are relative to support hosting under repository subpaths (e.g., GitHub Pages)
 const PRECACHE_ASSETS = [
@@ -18,7 +18,11 @@ const PRECACHE_ASSETS = [
   './src/ui/heatmap.js',
   './src/ui/app.js',
   './src/store/storage.js',
-  './src/store/export.js'
+  './src/store/export.js',
+  './src/analysis/config.js',
+  './src/analysis/pipeline.js',
+  './src/analysis/worker.js',
+  './src/analysis/run.js'
 ];
 
 // Network timeout for network-first strategy (3 seconds)

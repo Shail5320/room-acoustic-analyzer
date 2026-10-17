@@ -185,7 +185,11 @@ test('Phase 1 - Subpath HTTP server integration test', async () => {
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/heatmap.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/app.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/store/storage.js`,
-    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/store/export.js`
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/store/export.js`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/config.js`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/pipeline.js`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/worker.js`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/analysis/run.js`
   ];
 
   try {

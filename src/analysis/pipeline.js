@@ -1,0 +1,471 @@
+/**
+ * src/analysis/pipeline.js — Pure end-to-end audio recording analysis pipeline.
+ *
+ * Pipeline Stages:
+ *   1. Validation: sample rate (min 22050), recording duration (8s to 30s),
+ *      silence detection (max |sample| <= 1e-6), clipping detection (|sample| > 0.99).
+ *   2. Sweep Synthesis: generate exponential sine sweep and inverse filter
+ *      at the recording's EXACT sample rate (never resample the recording).
+ *   3. Deconvolution: linear frequency-domain deconvolution (padded to 2^k).
+ *   4. Peak Detection & PNR Validation: locate direct arrival spike and verify
+ *      PNR >= 20 dB against pre-peak noise window.
+ *   5. Cut-off Decay Check: verify that the tail envelope has decayed to within
+ *      ~6 dB of the pre-peak noise floor; if not, set decayTruncated: true and
+ *      cap affected tiers at "approximate".
+ *   6. IR Extraction: extract 2.5 s tail starting pre-peak.
+ *   7. Octave Filtering & RT60 Estimation: 4th-order Butterworth filters
+ *      (125–4000 Hz) with Schroeder backward integration, noise-floor truncation,
+ *      and 3-tier validity classification.
+ *   8. Dynamic Range Derivation: per-point dynamicRangeDb = minimum across all 6 bands,
+ *      with weakestBandHz returned alongside.
+ *   9. Lightweight Plot Decimation: downsampled irPlot and per-band edcPlot for UI rendering.
+ */
+
+import {
+  SWEEP_F1,
+  SWEEP_F2,
+  SWEEP_DURATION_S,
+  SWEEP_FADE_MS,
+  PNR_THRESHOLD_DB,
+  MIN_SAMPLE_RATE,
+  MIN_RECORDING_DURATION_S,
+  MAX_RECORDING_DURATION_S,
+  CLIPPING_THRESHOLD,
+  SILENCE_THRESHOLD,
+  DECAY_TAIL_MARGIN_DB,
+  OCTAVE_CENTRES,
+  IR_DURATION_S,
+  PRE_PEAK_MS,
+  IR_PLOT_POINTS,
+  EDC_PLOT_POINTS,
+} from './config.js';
+
+import { generateSweep, generateInverseFilter } from '../dsp/sweep.js';
+import { deconvolve, findPeakAndPNR, extractIR } from '../dsp/deconvolve.js';
+import { designOctaveFilters, sosFilt } from '../dsp/bands.js';
+import { analyzeRT60 } from '../dsp/rt60.js';
+
+// ---------------------------------------------------------------------------
+// Helpers: Downsampling for Canvas / UI Plotting
+// ---------------------------------------------------------------------------
+
+/**
+ * Downsample 1D signal to target number of points using peak-preserving min/max or decimation.
+ *
+ * @param {Float64Array} signal
+ * @param {number} sampleRate
+ * @param {number} targetPoints
+ * @returns {{ t: Float32Array, values: Float32Array }}
+ */
+export function downsampleWaveform(signal, sampleRate, targetPoints = IR_PLOT_POINTS) {
+  const N = signal.length;
+  if (N === 0) {
+    return { t: new Float32Array(0), values: new Float32Array(0) };
+  }
+  if (N <= targetPoints) {
+    const t = new Float32Array(N);
+    const values = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      t[i] = i / sampleRate;
+      values[i] = signal[i];
+    }
+    return { t, values };
+  }
+
+  const outT = new Float32Array(targetPoints);
+  const outVal = new Float32Array(targetPoints);
+  const step = (N - 1) / (targetPoints - 1);
+
+  for (let i = 0; i < targetPoints; i++) {
+    const idx = Math.round(i * step);
+    outT[i] = idx / sampleRate;
+    outVal[i] = signal[idx];
+  }
+  return { t: outT, values: outVal };
+}
+
+/**
+ * Downsample 2D curve (t, y) to target number of points.
+ *
+ * @param {Float64Array} t
+ * @param {Float64Array} y
+ * @param {number} targetPoints
+ * @returns {{ t: Float32Array, edcDb: Float32Array }}
+ */
+export function downsampleCurve(t, y, targetPoints = EDC_PLOT_POINTS) {
+  const N = t.length;
+  if (N === 0) {
+    return { t: new Float32Array(0), edcDb: new Float32Array(0) };
+  }
+  if (N <= targetPoints) {
+    const outT = new Float32Array(N);
+    const outY = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      outT[i] = t[i];
+      outY[i] = y[i];
+    }
+    return { t: outT, edcDb: outY };
+  }
+
+  const outT = new Float32Array(targetPoints);
+  const outY = new Float32Array(targetPoints);
+  const step = (N - 1) / (targetPoints - 1);
+
+  for (let i = 0; i < targetPoints; i++) {
+    const idx = Math.round(i * step);
+    outT[i] = t[idx];
+    outY[i] = y[idx];
+  }
+  return { t: outT, edcDb: outY };
+}
+
+// ---------------------------------------------------------------------------
+// Main Analysis Pipeline (Pure, No DOM)
+// ---------------------------------------------------------------------------
+
+/**
+ * Analyze an acoustic room recording end-to-end.
+ *
+ * @param {object} input
+ * @param {Float32Array|Float64Array} input.samples — Raw microphone recording samples
+ * @param {number} input.sampleRate                — Recording sample rate (Hz)
+ * @param {Function} [input.onProgress]            — Optional progress callback: ({ stage, progress, message }) => void
+ * @param {object} [input.options]                 — Optional threshold overrides
+ * @returns {{
+ *   ok: boolean,
+ *   rejectReason: string|null,
+ *   warning: string|null,
+ *   decayTruncated: boolean,
+ *   pnrDb: number,
+ *   dynamicRangeDb: number,
+ *   weakestBandHz: number|null,
+ *   clipped: boolean,
+ *   irPlot: { t: Float32Array, values: Float32Array }|null,
+ *   edcPlot: { [fc: number]: { t: Float32Array, edcDb: Float32Array } }|null,
+ *   bands: { [fc: number]: {
+ *     t20: number,
+ *     t30: number,
+ *     edt: number,
+ *     r2: number,
+ *     r2_t20: number,
+ *     r2_t30: number,
+ *     r2_edt: number,
+ *     used: string,
+ *     tier: string,
+ *     valid: boolean,
+ *     rt60: number|null,
+ *     dynamicRangeDb: number
+ *   } }|null,
+ *   timingsMs: {
+ *     sweepMs: number,
+ *     deconvolveMs: number,
+ *     filteringMs: number,
+ *     rt60Ms: number,
+ *     totalMs: number
+ *   }
+ * }}
+ */
+export function analyzeRecording({ samples, sampleRate, onProgress = null, options = {} }) {
+  const startTime = performance.now();
+  const timingsMs = {
+    sweepMs: 0,
+    deconvolveMs: 0,
+    filteringMs: 0,
+    rt60Ms: 0,
+    totalMs: 0,
+  };
+
+  const reportProgress = (stage, progress, message) => {
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({ stage, progress, message });
+      } catch (_) {
+        // Prevent caller callback error from crashing pipeline
+      }
+    }
+  };
+
+  reportProgress('validating', 0.05, 'Validating recording format and levels...');
+
+  // 1. Validate Input Types & Ensure Float64Array without mutating input
+  if (!samples || typeof samples.length !== 'number' || samples.length === 0) {
+    return {
+      ok: false,
+      rejectReason: 'Recording is empty or invalid',
+      warning: null,
+      decayTruncated: false,
+      pnrDb: 0,
+      dynamicRangeDb: 0,
+      weakestBandHz: null,
+      clipped: false,
+      irPlot: null,
+      edcPlot: null,
+      bands: null,
+      timingsMs,
+    };
+  }
+
+  const signal = new Float64Array(samples);
+
+  if (typeof sampleRate !== 'number' || sampleRate < MIN_SAMPLE_RATE) {
+    return {
+      ok: false,
+      rejectReason: `Sample rate too low (${sampleRate || 0} Hz < ${MIN_SAMPLE_RATE} Hz)`,
+      warning: null,
+      decayTruncated: false,
+      pnrDb: 0,
+      dynamicRangeDb: 0,
+      weakestBandHz: null,
+      clipped: false,
+      irPlot: null,
+      edcPlot: null,
+      bands: null,
+      timingsMs,
+    };
+  }
+
+  const minDurationS = options.minDurationS ?? MIN_RECORDING_DURATION_S;
+  const maxDurationS = options.maxDurationS ?? MAX_RECORDING_DURATION_S;
+
+  const durationS = signal.length / sampleRate;
+  if (durationS < minDurationS) {
+    return {
+      ok: false,
+      rejectReason: `Recording too short (${durationS.toFixed(2)} s < ${minDurationS} s)`,
+      warning: null,
+      decayTruncated: false,
+      pnrDb: 0,
+      dynamicRangeDb: 0,
+      weakestBandHz: null,
+      clipped: false,
+      irPlot: null,
+      edcPlot: null,
+      bands: null,
+      timingsMs,
+    };
+  }
+
+  if (durationS > maxDurationS) {
+    return {
+      ok: false,
+      rejectReason: `Recording too long (${durationS.toFixed(2)} s > ${maxDurationS} s)`,
+      warning: null,
+      decayTruncated: false,
+      pnrDb: 0,
+      dynamicRangeDb: 0,
+      weakestBandHz: null,
+      clipped: false,
+      irPlot: null,
+      edcPlot: null,
+      bands: null,
+      timingsMs,
+    };
+  }
+
+  // Detect clipping and silence
+  let clipped = false;
+  let maxAbs = 0.0;
+  for (let i = 0; i < signal.length; i++) {
+    const a = Math.abs(signal[i]);
+    if (a > maxAbs) maxAbs = a;
+    if (a > CLIPPING_THRESHOLD) clipped = true;
+  }
+
+  if (maxAbs <= SILENCE_THRESHOLD) {
+    return {
+      ok: false,
+      rejectReason: 'Recording is silent',
+      warning: null,
+      decayTruncated: false,
+      pnrDb: 0,
+      dynamicRangeDb: 0,
+      weakestBandHz: null,
+      clipped,
+      irPlot: null,
+      edcPlot: null,
+      bands: null,
+      timingsMs,
+    };
+  }
+
+  // 2. Synthesize Sweep & Inverse Filter at Recording Sample Rate
+  reportProgress('sweep', 0.15, `Synthesizing sweep at ${sampleRate} Hz...`);
+  const tSweepStart = performance.now();
+  const f1 = options.f1 || SWEEP_F1;
+  const f2 = options.f2 || SWEEP_F2;
+  const T = options.T || SWEEP_DURATION_S;
+  const fadeMs = options.fadeMs || SWEEP_FADE_MS;
+
+  const sweep = generateSweep(f1, f2, T, sampleRate, fadeMs);
+  const invFilter = generateInverseFilter(sweep, f1, f2, T, sampleRate);
+  timingsMs.sweepMs = performance.now() - tSweepStart;
+
+  // 3. Deconvolve
+  reportProgress('deconvolve', 0.35, 'Deconvolving room impulse response...');
+  const tDeconvStart = performance.now();
+  const hFull = deconvolve(signal, invFilter);
+
+  // 4. Peak Detection and PNR Validation
+  const prePeakMs = options.prePeakMs || PRE_PEAK_MS;
+  const { peakIdx, peakVal, pnrDb } = findPeakAndPNR(hFull, sampleRate, prePeakMs);
+  timingsMs.deconvolveMs = performance.now() - tDeconvStart;
+
+  const pnrThreshold = options.pnrThresholdDb || PNR_THRESHOLD_DB;
+  if (peakVal <= 1e-12 || pnrDb < pnrThreshold) {
+    return {
+      ok: false,
+      rejectReason: 'No sweep detected — make sure the source played during recording',
+      warning: null,
+      decayTruncated: false,
+      pnrDb: Math.round(pnrDb * 10) / 10,
+      dynamicRangeDb: 0,
+      weakestBandHz: null,
+      clipped,
+      irPlot: null,
+      edcPlot: null,
+      bands: null,
+      timingsMs: {
+        ...timingsMs,
+        totalMs: performance.now() - startTime,
+      },
+    };
+  }
+
+  // 5. Cut-Off Decay Check
+  // Verify that the signal envelope at the end of the recording has decayed to
+  // within about 6 dB of the pre-peak noise floor.
+  const preSamples = Math.round(prePeakMs * 1e-3 * sampleRate);
+  const noiseStart = Math.max(0, peakIdx - Math.round(0.5 * sampleRate));
+  const noiseEnd = Math.max(0, peakIdx - preSamples);
+  const noiseWindow = hFull.subarray(noiseStart, noiseEnd);
+
+  // Measure signal envelope at the end of the recording (last 50 ms)
+  const windowLen = Math.max(10, Math.round(0.05 * sampleRate));
+  const endSamples = signal.subarray(signal.length - windowLen);
+  let sumSqEnd = 0;
+  for (let i = 0; i < endSamples.length; i++) sumSqEnd += endSamples[i] ** 2;
+  const endEnvelopeRms = Math.sqrt(sumSqEnd / endSamples.length);
+
+  // Pre-peak noise floor in the recording
+  const directIdxInRec = Math.max(0, peakIdx - (sweep.length - 1));
+  let prePeakNoiseRms;
+
+  if (directIdxInRec > windowLen) {
+    const preWindow = signal.subarray(0, Math.min(directIdxInRec, Math.round(1.0 * sampleRate)));
+    let sumSqPre = 0;
+    for (let i = 0; i < preWindow.length; i++) sumSqPre += preWindow[i] ** 2;
+    prePeakNoiseRms = Math.sqrt(sumSqPre / preWindow.length);
+  } else {
+    let sumNoise = 0;
+    for (let i = 0; i < noiseWindow.length; i++) sumNoise += noiseWindow[i] ** 2;
+    const deconvNoiseRms = noiseWindow.length > 50 ? Math.sqrt(sumNoise / noiseWindow.length) : 1e-12;
+    prePeakNoiseRms = peakVal > 0 ? (deconvNoiseRms / peakVal) : 1e-6;
+  }
+
+  const marginDb = options.decayTailMarginDb ?? DECAY_TAIL_MARGIN_DB;
+  const tailAboveNoiseDb = 20.0 * Math.log10(
+    Math.max(endEnvelopeRms, 1e-15) / Math.max(prePeakNoiseRms, 1e-15)
+  );
+
+  let decayTruncated = false;
+  let warning = null;
+  if (endEnvelopeRms > 1e-5 && tailAboveNoiseDb > marginDb) {
+    decayTruncated = true;
+    warning = 'Reverberation decay appears cut off before reaching the noise floor';
+  }
+
+  // 6. Extract Impulse Response
+  const irDurationS = options.irDurationS || IR_DURATION_S;
+  const irLengthSamples = Math.min(
+    Math.round(irDurationS * sampleRate),
+    hFull.length - Math.max(0, peakIdx - preSamples)
+  );
+  const ir = extractIR(hFull, peakIdx, irLengthSamples, sampleRate, prePeakMs);
+
+  // 7. Octave Filtering and RT60 Estimation
+  reportProgress('filtering', 0.60, 'Filtering 6 octave bands...');
+  const tFiltStart = performance.now();
+  const octaveCentres = options.octaveCentres || OCTAVE_CENTRES;
+  const filters = designOctaveFilters(sampleRate, octaveCentres);
+  timingsMs.filteringMs = performance.now() - tFiltStart;
+
+  reportProgress('rt60', 0.80, 'Computing Schroeder decay curves and RT60...');
+  const tRt60Start = performance.now();
+
+  const bands = {};
+  const edcPlot = {};
+  const drList = [];
+
+  for (const fc of octaveCentres) {
+    const sos = filters.get(fc);
+    const filtered = sosFilt(sos, ir);
+    const res = analyzeRT60(filtered, sampleRate, true);
+
+    let tier = res.tier;
+    let valid = res.valid;
+
+    // Cut-off decay penalty: cap tier at "approximate" at best
+    if (decayTruncated) {
+      if (tier === 'valid') {
+        tier = 'approximate';
+        valid = true;
+      }
+    }
+
+    const rt60Val = (res.used === 'none' || tier === 'invalid' || Number.isNaN(res.rt60))
+      ? null
+      : res.rt60;
+
+    const bandDr = Math.round(res.dynamicRangeDb * 10) / 10;
+    drList.append ? drList.append({ dr: bandDr, fc }) : drList.push({ dr: bandDr, fc });
+
+    bands[fc] = {
+      t20: res.t20,
+      t30: res.t30,
+      edt: res.edt,
+      r2: res.r2,
+      r2_t20: res.r2_t20,
+      r2_t30: res.r2_t30,
+      r2_edt: res.r2_edt,
+      used: res.used,
+      tier,
+      valid,
+      rt60: rt60Val,
+      dynamicRangeDb: bandDr,
+    };
+
+    edcPlot[fc] = downsampleCurve(res.t, res.edcDb, EDC_PLOT_POINTS);
+  }
+  timingsMs.rt60Ms = performance.now() - tRt60Start;
+
+  // 8. Derive Per-Point Dynamic Range (Minimum over all 6 bands) & Weakest Band
+  let minDr = Infinity;
+  let weakestBandHz = octaveCentres[0];
+  for (const item of drList) {
+    if (item.dr < minDr) {
+      minDr = item.dr;
+      weakestBandHz = item.fc;
+    }
+  }
+
+  // 9. Downsampled IR Plot
+  const irPlot = downsampleWaveform(ir, sampleRate, IR_PLOT_POINTS);
+
+  timingsMs.totalMs = performance.now() - startTime;
+  reportProgress('done', 1.0, 'Analysis complete.');
+
+  return {
+    ok: true,
+    rejectReason: null,
+    warning,
+    decayTruncated,
+    pnrDb: Math.round(pnrDb * 10) / 10,
+    dynamicRangeDb: minDr,
+    weakestBandHz,
+    clipped,
+    irPlot,
+    edcPlot,
+    bands,
+    timingsMs,
+  };
+}
