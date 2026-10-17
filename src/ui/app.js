@@ -1315,7 +1315,10 @@ export async function initApp() {
       if (dur) parts.push(`${dur.toFixed(1)} s`);
       if (audioMeta.isMultiChannel) parts.push('Ch 0 (mono extracted)');
       if (audioMeta.isCompressed) parts.push('Compressed audio');
-      if (result.simulated && result.targetRt60) parts.push(`Target RT60: ${result.targetRt60.toFixed(2)} s`);
+      if (result.simulated && result.targetRt60) {
+        const nStr = result.noiseLevelDb != null ? ` (Noise: ${result.noiseLevelDb} dB re peak)` : ' (Clean)';
+        parts.push(`Target RT60: ${result.targetRt60.toFixed(2)} s${nStr}`);
+      }
       analyzeAudioInfo.textContent = parts.join(' · ');
     }
 
@@ -1376,23 +1379,38 @@ export async function initApp() {
     });
   }
 
+  if (sliderSelftestNoise && selftestNoiseVal) {
+    sliderSelftestNoise.addEventListener('input', (e) => {
+      const val = Number(e.target.value);
+      if (val <= -40) {
+        selftestNoiseVal.textContent = 'Clean';
+      } else {
+        selftestNoiseVal.textContent = `${val} dB`;
+      }
+    });
+  }
+
   if (btnRunSelftest) {
     btnRunSelftest.addEventListener('click', async () => {
       const rtTarget = sliderSelftestRt60 ? Number(sliderSelftestRt60.value) : 0.8;
+      const noiseRaw = sliderSelftestNoise ? Number(sliderSelftestNoise.value) : -40;
+      const noiseLevelDb = noiseRaw > -40 ? noiseRaw : null;
       if (analyzeRejectCard) analyzeRejectCard.hidden = true;
       if (analyzeResultsContainer) analyzeResultsContainer.hidden = true;
-      setAnalyzeProgress('simulation', 0.05, `Simulating room impulse response (target RT60 = ${rtTarget.toFixed(1)} s)...`);
+      const noiseLabel = noiseLevelDb != null ? `, noise = ${noiseLevelDb} dB re peak` : '';
+      setAnalyzeProgress('simulation', 0.05, `Simulating room impulse response (target RT60 = ${rtTarget.toFixed(1)} s${noiseLabel})...`);
 
       try {
         const result = await runSelfTest({
           rtTarget,
+          noiseLevelDb,
           onProgress: (info) => setAnalyzeProgress(info),
         });
 
         lastLoadedAudio = {
           samples: null,
           sampleRate: 48000,
-          fileName: `simulated_room_rt${rtTarget.toFixed(1)}s.wav`,
+          fileName: `simulated_room_rt${rtTarget.toFixed(1)}s${noiseLevelDb != null ? '_n' + noiseLevelDb + 'dB' : ''}.wav`,
           isMultiChannel: false,
           isCompressed: false,
         };
@@ -1400,7 +1418,7 @@ export async function initApp() {
         displayAnalysisResults(result, {
           sampleRate: 48000,
           durationS: 9.0,
-          fileName: `simulated_room_rt${rtTarget.toFixed(1)}s.wav`,
+          fileName: `simulated_room_rt${rtTarget.toFixed(1)}s${noiseLevelDb != null ? '_n' + noiseLevelDb + 'dB' : ''}.wav`,
           isMultiChannel: false,
           isCompressed: false,
         });
