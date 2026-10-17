@@ -95,6 +95,7 @@ test('Phase 1 - Service Worker structure, safe update flow, and caching strategi
 
   // Verify network-first with timeout for all same-origin GET requests with cache fallback
   assert.match(content, /const\s+NETWORK_TIMEOUT_MS\s*=\s*3000;?/, 'Must configure 3000ms (3s) network timeout');
+  assert.match(content, /fetch\(request,\s*\{\s*cache:\s*['"]no-cache['"]\s*\}\)/, 'Must fetch with cache: no-cache to bypass HTTP cache on GitHub Pages');
   assert.match(content, /fetchWithTimeout[\s\S]*caches\.open\(CACHE_NAME\)/, 'Must fetch network-first with timeout and cache successful basic responses');
   assert.match(content, /caches\.match\(event\.request\)/, 'Must fall back to cache upon network timeout or error');
   assert.match(content, /isIndexHtmlRequest/, 'Must have navigation / index.html detection helper');

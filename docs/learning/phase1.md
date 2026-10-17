@@ -86,12 +86,12 @@ sequenceDiagram
 
 When a new version was deployed, an online user would immediately receive the new `index.html` from the network. However, as the browser parsed the HTML and requested `./src/ui/app.js` and other scripts, the cache-first rule intercepted the requests and served the **old cached JavaScript** from the previous version. The application ran in an inconsistent, broken hybrid state until the new service worker completed installation and the user manually reloaded.
 
-#### The Solution: Network-First with 3-Second Timeout for All Same-Origin GETs
-To eliminate version skew completely, **no route is cache-first**. All same-origin GET requests follow a uniform **Network-First with 3-Second Timeout** strategy, falling back to cache only when offline or when the network times out:
+#### The Solution: Network-First with `cache: 'no-cache'` and 3-Second Timeout
+To eliminate version skew completely, **no route is cache-first**. All same-origin GET requests follow a uniform **Network-First with 3-Second Timeout** strategy with `fetch(request, { cache: 'no-cache' })`, falling back to cache only when offline or when the network times out:
 
 ```mermaid
 flowchart TD
-    Req["Incoming Same-Origin GET Request"] --> Net["Attempt fetch(request) with 3s Timeout"]
+    Req["Incoming Same-Origin GET Request"] --> Net["Attempt fetch(request, { cache: 'no-cache' })<br/>with 3s Timeout"]
     Net -->|"Success (200 OK, basic)"| CachePut["Clone response & update versioned cache"] --> RetNet["Return Network Response"]
     Net -->|"Failure or Timeout (> 3s)"| CacheMatch["caches.match(event.request)"]
     CacheMatch -->|"Found in Cache"| RetCache["Return Cached Response"]
@@ -99,19 +99,27 @@ flowchart TD
     CacheMatch -->|"Not in Cache & Asset"| Error["Reject (404/Error)"]
 ```
 
+#### Why `{ cache: 'no-cache' }` is Critical on GitHub Pages
+GitHub Pages serves static assets with a default `Cache-Control: max-age=600` header (roughly 10 minutes).
+- **The Problem:** Even with a network-first strategy, if the service worker simply executes `fetch(request)`, the browser's underlying HTTP cache satisfies the request from local disk/memory if 10 minutes have not elapsed since the last fetch. A user would still receive stale scripts for up to 10 minutes after a new commit is pushed.
+- **The Fix:** Specifying `{ cache: 'no-cache' }` tells the browser's HTTP cache that it **must not** serve the asset without first revalidating it against the origin server. The browser issues a conditional HTTP request with `If-None-Match` (ETag) or `If-Modified-Since`.
+  - If nothing changed: The server responds with a lightweight `304 Not Modified`, saving data while verifying freshness.
+  - If a new version was deployed: The server responds with `200 OK` and the brand-new file content immediately.
+
 #### Mathematical / Logical Formulation
 For any same-origin GET request $R$:
-$$\text{Response}(R) = \operatorname{Promise.race}\Big(\operatorname{Fetch}(R), \;\operatorname{Timeout}(3000\,\text{ms})\Big) \;\operatorname{catch}\; \operatorname{CacheFallback}(R)$$
+$$\text{Response}(R) = \operatorname{Promise.race}\Big(\operatorname{Fetch}(R, \{\text{cache: 'no-cache'}\}), \;\operatorname{Timeout}(3000\,\text{ms})\Big) \;\operatorname{catch}\; \operatorname{CacheFallback}(R)$$
 $$\operatorname{CacheFallback}(R) = \operatorname{CacheMatch}(R) \;\lor\; \Big(\text{isNavigation}(R) \;\land\; \operatorname{CacheMatch}(\text{'./index.html'})\Big)$$
 
 #### Engineering Trade-offs
-| Attribute | Cache-First for Assets (Previous) | Network-First with 3s Timeout (Current) |
-|---|---|---|
-| **Version Consistency** | ❌ Prone to mixed-version skew between new HTML and stale JS | ✅ **Guaranteed consistent**: HTML, JS, and CSS always update in lockstep |
-| **Online Load Latency** | Instantaneous cache read | Network round-trip (mitigated by HTTP browser caching headers) |
-| **Offline Reliability** | ✅ Loads from cache offline | ✅ Loads from cache offline immediately when network fails |
-| **"Lie-fi" / Stalled Network** | Static assets load; HTML waits for network | 3-second bounded timeout before falling back to full cached app shell |
-| **Pre-caching on Install** | Pre-caches full app shell | Pre-caches full app shell (ready for immediate offline use) |
+| Attribute | Cache-First for Assets | Plain Network-First | Network-First with `cache: 'no-cache'` & 3s Timeout (Current) |
+|---|---|---|---|
+| **Version Consistency** | ❌ Prone to mixed-version skew | ⚠️ Can be poisoned by GitHub Pages' 10-min HTTP cache | ✅ **Guaranteed**: Revalidates with origin; HTML, JS, CSS always in lockstep |
+| **HTTP Cache Revalidation** | Ignores HTTP headers; serves from SW cache | Uses browser HTTP cache (up to 10 min stale) | Bypasses local HTTP staleness; forces conditional validation (`304 Not Modified`) |
+| **Online Load Latency** | Instantaneous cache read | Fast if HTTP cache hits; network otherwise | Small network round-trip overhead on reload (mitigated by HTTP 304 responses) |
+| **Offline Reliability** | ✅ Loads from cache offline | ✅ Loads from cache offline | ✅ **Immediate fallback** to versioned cache when offline |
+| **"Lie-fi" / Stalled Network** | Assets load; HTML hangs | All assets hang until browser timeout (~30–60 s) | **Bounded at 3 seconds max** before falling back to complete cached app shell |
+| **Pre-caching on Install** | Pre-caches app shell | Pre-caches app shell | Pre-caches app shell into versioned cache (`CACHE_NAME`) |
 
 ---
 
