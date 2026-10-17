@@ -65,22 +65,53 @@ sequenceDiagram
 
 ---
 
-### Hybrid Caching Strategy: Network-First vs. Cache-First
+### Uniform Network-First with Timeout Caching Strategy
 
-Different types of assets require distinct caching behaviors to balance freshness against offline reliability:
+#### The Mixed-Version Pitfall of Hybrid Caching
+Previously, the app used a hybrid approach: **Network-First for `index.html`** and **Cache-First for static assets (JS, CSS)**. While this seemed optimal for offline speed, it introduced a critical bug: **Version Skew / Mixed Versions**.
 
-| Request Category | Target Assets | Strategy | Rationale |
-|---|---|---|---|
-| **Navigation / Document** | `index.html`, `/`, `./` | **Network-First** (fallback to Cache) | Online users immediately fetch the latest HTML shell and detect app updates. If offline, the cached shell loads seamlessly. |
-| **Static Sub-Resources** | `style.css`, `*.js`, `*.png`, `manifest` | **Cache-First** (fallback to Network) | Versioned static assets are immutable for a given release. Cache-first guarantees instant load performance and minimal bandwidth. |
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User Browser
+    participant SW as Active Service Worker (v3)
+    participant Net as Origin Server (v4 deployed)
+
+    User->>SW: Fetch index.html (Navigation)
+    SW->>Net: Network-First fetch: returns NEW index.html (v4)
+    User->>SW: Parse HTML & fetch script: app.js
+    SW->>SW: Cache-First rule: matches and returns OLD app.js (v3)
+    Note over User: CRITICAL FAILURE: New HTML runs with Old JS!<br/>DOM elements mismatch, method signatures differ.
+```
+
+When a new version was deployed, an online user would immediately receive the new `index.html` from the network. However, as the browser parsed the HTML and requested `./src/ui/app.js` and other scripts, the cache-first rule intercepted the requests and served the **old cached JavaScript** from the previous version. The application ran in an inconsistent, broken hybrid state until the new service worker completed installation and the user manually reloaded.
+
+#### The Solution: Network-First with 3-Second Timeout for All Same-Origin GETs
+To eliminate version skew completely, **no route is cache-first**. All same-origin GET requests follow a uniform **Network-First with 3-Second Timeout** strategy, falling back to cache only when offline or when the network times out:
+
+```mermaid
+flowchart TD
+    Req["Incoming Same-Origin GET Request"] --> Net["Attempt fetch(request) with 3s Timeout"]
+    Net -->|"Success (200 OK, basic)"| CachePut["Clone response & update versioned cache"] --> RetNet["Return Network Response"]
+    Net -->|"Failure or Timeout (> 3s)"| CacheMatch["caches.match(event.request)"]
+    CacheMatch -->|"Found in Cache"| RetCache["Return Cached Response"]
+    CacheMatch -->|"Not in Cache & Navigation"| Fallback["Return cached ./index.html"]
+    CacheMatch -->|"Not in Cache & Asset"| Error["Reject (404/Error)"]
+```
 
 #### Mathematical / Logical Formulation
+For any same-origin GET request $R$:
+$$\text{Response}(R) = \operatorname{Promise.race}\Big(\operatorname{Fetch}(R), \;\operatorname{Timeout}(3000\,\text{ms})\Big) \;\operatorname{catch}\; \operatorname{CacheFallback}(R)$$
+$$\operatorname{CacheFallback}(R) = \operatorname{CacheMatch}(R) \;\lor\; \Big(\text{isNavigation}(R) \;\land\; \operatorname{CacheMatch}(\text{'./index.html'})\Big)$$
 
-For navigation requests (`request.mode === 'navigate'` or URL ending in `/` or `index.html`):
-$$\text{Response}_{\text{HTML}} = \text{Network}(\text{Request}) \;\operatorname{catch}\; \Big(\text{Cache}(\text{Request}) \;\lor\; \text{Cache}(\text{'./index.html'})\Big)$$
-
-For static asset requests (CSS, JS, images, manifest):
-$$\text{Response}_{\text{Asset}} = \text{Cache}(\text{Request}) \;\operatorname{catch}\; \Big(\text{Network}(\text{Request}) \;\to\; \text{CachePut}(\text{Request})\Big)$$
+#### Engineering Trade-offs
+| Attribute | Cache-First for Assets (Previous) | Network-First with 3s Timeout (Current) |
+|---|---|---|
+| **Version Consistency** | ❌ Prone to mixed-version skew between new HTML and stale JS | ✅ **Guaranteed consistent**: HTML, JS, and CSS always update in lockstep |
+| **Online Load Latency** | Instantaneous cache read | Network round-trip (mitigated by HTTP browser caching headers) |
+| **Offline Reliability** | ✅ Loads from cache offline | ✅ Loads from cache offline immediately when network fails |
+| **"Lie-fi" / Stalled Network** | Static assets load; HTML waits for network | 3-second bounded timeout before falling back to full cached app shell |
+| **Pre-caching on Install** | Pre-caches full app shell | Pre-caches full app shell (ready for immediate offline use) |
 
 ---
 

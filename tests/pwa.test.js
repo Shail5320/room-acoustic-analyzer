@@ -93,12 +93,12 @@ test('Phase 1 - Service Worker structure, safe update flow, and caching strategi
   // Verify message-based skipWaiting
   assert.match(content, /addEventListener\(['"]message['"][\s\S]*self\.skipWaiting\(\)/, 'Must trigger skipWaiting in response to message');
 
-  // Verify network-first for index.html / navigation with cache fallback
-  assert.match(content, /isIndexHtmlRequest|request\.mode === ['"]navigate['"]/, 'Must detect navigation / index.html requests');
-  assert.match(content, /fetch\(event\.request\)[\s\S]*caches\.open\(CACHE_NAME\)[\s\S]*caches\.match/, 'Must implement network-first for index.html with cache fallback');
-
-  // Verify cache-first for other assets
-  assert.match(content, /caches\.match\(event\.request\)[\s\S]*fetch\(event\.request\)/, 'Must implement cache-first for other assets with network fallback');
+  // Verify network-first with timeout for all same-origin GET requests with cache fallback
+  assert.match(content, /const\s+NETWORK_TIMEOUT_MS\s*=\s*3000;?/, 'Must configure 3000ms (3s) network timeout');
+  assert.match(content, /fetchWithTimeout[\s\S]*caches\.open\(CACHE_NAME\)/, 'Must fetch network-first with timeout and cache successful basic responses');
+  assert.match(content, /caches\.match\(event\.request\)/, 'Must fall back to cache upon network timeout or error');
+  assert.match(content, /isIndexHtmlRequest/, 'Must have navigation / index.html detection helper');
+  assert.match(content, /caches\.match\(['"]\.\/index\.html['"]\)/, 'Must maintain index.html fallback for navigations');
 
   // Parse precache array
   const match = content.match(/const\s+PRECACHE_ASSETS\s*=\s*\[([\s\S]*?)\];/);
@@ -114,6 +114,31 @@ test('Phase 1 - Service Worker structure, safe update flow, and caching strategi
     const resolvedPath = path.join(rootDir, asset.replace(/^\.\//, ''));
     assert.ok(fs.existsSync(resolvedPath), `Precached asset must exist: ${resolvedPath}`);
   }
+});
+
+test('Phase 1 - Service Worker asserts NO route is cache-first', () => {
+  const swPath = path.join(rootDir, 'sw.js');
+  assert.ok(fs.existsSync(swPath), 'sw.js must exist');
+
+  const content = fs.readFileSync(swPath, 'utf-8');
+
+  // Assert no cache-first pattern exists: caches.match(...) must NOT be called before network fetch in fetch listener
+  assert.doesNotMatch(
+    content,
+    /caches\.match\(event\.request\)[\s\S]*fetch\(/,
+    'No route should be cache-first (caches.match before fetch is forbidden)'
+  );
+
+  // Assert all same-origin GET routes go through network-first fetchWithTimeout
+  assert.match(
+    content,
+    /event\.respondWith\(\s*fetchWithTimeout\(event\.request/,
+    'All requests must use network-first strategy via fetchWithTimeout'
+  );
+
+  // Assert non-GET and cross-origin requests are excluded from SW handling/caching
+  assert.match(content, /event\.request\.method\s*!==\s*['"]GET['"]/, 'Must exclude non-GET requests');
+  assert.match(content, /url\.origin\s*!==\s*self\.location\.origin/, 'Must exclude cross-origin requests');
 });
 
 test('Phase 1 - Subpath HTTP server integration test', async () => {

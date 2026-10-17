@@ -19,6 +19,9 @@ const PRECACHE_ASSETS = [
   './src/store/export.js'
 ];
 
+// Network timeout for network-first strategy (3 seconds)
+const NETWORK_TIMEOUT_MS = 3000;
+
 // Install: Pre-cache core app shell
 // Note: Do NOT call self.skipWaiting() here to avoid mixing old pages with new scripts.
 self.addEventListener('install', (event) => {
@@ -72,54 +75,66 @@ function isIndexHtmlRequest(request) {
   }
 }
 
-// Fetch: Network-first for index.html (with cache fallback); Cache-first for other assets
+// Helper: Fetch with timeout
+function fetchWithTimeout(request, timeoutMs = NETWORK_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Network timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    fetch(request)
+      .then((response) => {
+        clearTimeout(timer);
+        resolve(response);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+// Fetch: Network-first with 3s timeout for ALL same-origin GET requests; fallback to cache
 self.addEventListener('fetch', (event) => {
   // Only intercept GET requests
   if (event.request.method !== 'GET') return;
 
-  if (isIndexHtmlRequest(event.request)) {
-    // Network-First with Cache Fallback for index.html
-    event.respondWith(
-      fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-          }
-          return networkResponse;
-        })
-        .catch(() => {
-          return caches.match(event.request).then((cachedResponse) => {
-            if (cachedResponse) {
-              return cachedResponse;
-            }
-            return caches.match('./index.html');
-          });
-        })
-    );
-  } else {
-    // Cache-First with Network Fallback for static assets
-    event.respondWith(
-      caches.match(event.request).then((cachedResponse) => {
-        if (cachedResponse) {
-          return cachedResponse;
-        }
-        return fetch(event.request).then((networkResponse) => {
-          // Only cache valid basic same-origin responses
-          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-            return networkResponse;
-          }
+  // Don't intercept or cache cross-origin requests
+  try {
+    const url = new URL(event.request.url);
+    if (url.origin !== self.location.origin) return;
+  } catch (err) {
+    return;
+  }
 
+  // Network-First with 3s timeout and Cache Fallback
+  event.respondWith(
+    fetchWithTimeout(event.request, NETWORK_TIMEOUT_MS)
+      .then((networkResponse) => {
+        // Cache successful basic responses into versioned cache
+        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
           });
-
-          return networkResponse;
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        // Fallback to cache on network failure or timeout
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          // Navigation fallback to index.html if specific navigation URL isn't cached directly
+          if (isIndexHtmlRequest(event.request)) {
+            return caches.match('./index.html').then((indexFallback) => {
+              if (indexFallback) return indexFallback;
+              return caches.match('./');
+            });
+          }
+          return Promise.reject(new Error('Asset not found in cache'));
         });
       })
-    );
-  }
+  );
 });
