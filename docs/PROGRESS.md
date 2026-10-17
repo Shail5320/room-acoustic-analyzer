@@ -4,7 +4,7 @@
 
 ## Current Status
 
-Phase 4a completed (Tasks 4.1 to 4.5: Interactive Floor Plan and Measurement Data Capture. Pure ES modules in `src/ui/`: `coordinates.js` for aspect-ratio letterboxing and bidirectional relative [0, 1] <-> pixel transforms; `session-model.js` managing single movable source and numbered measurement list with DSP-aligned data shape; `floorplan.js` canvas renderer with Pointer Events and high-DPI support; `app.js` UI controller; `[DEV] Add test measurement` button. All 54 tests pass under `node:test`). Ready for Phase 4b / Phase 3a.
+Phase 4b completed (Tasks 4.6 to 4.9: Room dimensions validation and conversion in `src/ui/dimensions.js`; session storage in IndexedDB with Adapter Pattern and in-memory fallback in `src/store/storage.js`; pure JSON and RFC 4180 CSV export in `src/store/export.js`; full UI integration in `src/ui/app.js` and `index.html`; Service Worker precache updated to `echomap-v4`; `docs/learning/phase4.md` written; all 69 tests passing under `node:test`). Ready for Phase 3a (Audio I/O) or Phase 5 (Heatmap).
 
 ## Phase Tracker
 
@@ -20,7 +20,7 @@ Phase 4a completed (Tasks 4.1 to 4.5: Interactive Floor Plan and Measurement Dat
 | 3a | Audio I/O + measurement flow | Ready to start | — |
 | 3b | Web Worker, single-device, results, deploy | Not started | — |
 | 4a | Floor plan UI + data capture (Tasks 4.1–4.5) | Completed | 2026-10-17 |
-| 4b | Room dimensions, IndexedDB & export (Tasks 4.6–4.9) | Not started | — |
+| 4b | Room dimensions, IndexedDB & export (Tasks 4.6–4.9) | Completed | 2026-10-17 |
 | 5 | Heatmap | Not started | — |
 | 6 | Treatment calculator | Not started | — |
 | 7 | Polish + hardening | Not started | — |
@@ -45,3 +45,4 @@ Phase 4a completed (Tasks 4.1 to 4.5: Interactive Floor Plan and Measurement Dat
 | 2026-10-17 | Phase 2a completed: implemented pure ES modules in `src/dsp/` (`fft.js`, `sweep.js`, `deconvolve.js`, `bands.js`) with zero external runtime dependencies; fixed 12-decimal truncation in `expected_outputs.json` filter serialization to retain full IEEE 754 precision; verified all 6 octave bands meet ≤ 1e-8 relative coefficient tolerance and ≤ 0.01 dB magnitude response; implemented silence, noise-only, and SNR sweep PNR rejection tests in `tests/deconvolve.test.js`; all 27 tests passing. |
 | 2026-10-17 | Phase 2b completed: implemented pure ES modules `src/dsp/rt60.js` (8-step simplified noise-floor truncation, Schroeder backward integration, T20/T30/EDT linear regression, R², 3-tier validity classification) and `src/dsp/sabine.js` (dimensionless absorption ratio, room geometry, optional Sabine panel treatment sizing, Eyring cross-check); verified Tier 1 (per-band RT60 matches expected_outputs.json to ≤ 0.000034 s), Tier 2 (within Monte Carlo 2σ empirical bounds), and DR 45/35/25/15 noise table matching Python reference tiers and values; all 47 tests passing under `node:test`; `docs/learning/phase2.md` written. |
 | 2026-10-17 | Phase 4a completed: implemented Tasks 4.1 to 4.5 in `src/ui/` (`coordinates.js`, `session-model.js`, `floorplan.js`, `app.js`); aspect-ratio floor plan with relative 0–1 coordinates; taps outside room ignored while dragging clamps to walls; movable source marker; numbered measurement markers with pending vs measured states; DSP-aligned measurement schema; DEV-only button generating synthetic per-band RT60 values (`fake: true`, covering valid, approximate, and invalid tiers); touch targets ≥ 48px; Pointer Events with touch-action: none on canvas only; service worker bumped to `echomap-v2`; 54 tests passing. |
+| 2026-10-17 | Phase 4b completed: implemented Tasks 4.6 to 4.9: optional room dimensions panel (`src/ui/dimensions.js`) with metres/step counts, sane bounds validation (1–50m horizontal, 2–10m height), step count "approximate" tagging, and bidirectional aspect-ratio sync/warning; session persistence in IndexedDB with Adapter Pattern and in-memory fallback (`src/store/storage.js`); pure JSON and flat RFC 4180 CSV export with comma/quote/newline escaping, pending empty cells, conditional metric columns, and simulated test data warnings (`src/store/export.js`); full UI lifecycle controls in `src/ui/app.js` and `index.html`; SW cache bumped to `echomap-v4`; `docs/learning/phase4.md` written; all 69 tests passing under `node:test`. |

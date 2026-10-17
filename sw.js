@@ -1,6 +1,6 @@
 // EchoMap Service Worker
 // Cache version identifier — update this when modifying cached assets
-const CACHE_NAME = 'echomap-v3';
+const CACHE_NAME = 'echomap-v4';
 
 // All paths are relative to support hosting under repository subpaths (e.g., GitHub Pages)
 const PRECACHE_ASSETS = [
@@ -13,7 +13,10 @@ const PRECACHE_ASSETS = [
   './src/ui/coordinates.js',
   './src/ui/session-model.js',
   './src/ui/floorplan.js',
-  './src/ui/app.js'
+  './src/ui/dimensions.js',
+  './src/ui/app.js',
+  './src/store/storage.js',
+  './src/store/export.js'
 ];
 
 // Install: Pre-cache core app shell

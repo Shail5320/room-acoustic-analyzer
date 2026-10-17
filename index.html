@@ -29,6 +29,117 @@
     </header>
 
     <main id="app" class="app-container">
+      <!-- Session Management Card -->
+      <section class="card session-card">
+        <div class="session-header-row">
+          <div class="session-name-wrapper">
+            <label for="input-session-name" class="visually-hidden">Session Name</label>
+            <input
+              id="input-session-name"
+              class="form-input session-name-input"
+              type="text"
+              value="Untitled Session"
+              placeholder="Session Name"
+              maxlength="60"
+            />
+          </div>
+          <div id="status-session" class="session-status" aria-live="polite">Auto-saved</div>
+        </div>
+
+        <div id="storage-warning" class="storage-warning" hidden></div>
+        <div id="fake-warning-banner" class="fake-warning-banner" hidden>
+          ⚠️ Session contains simulated [DEV] measurements.
+        </div>
+
+        <div class="session-actions-row">
+          <button id="btn-session-save" class="btn btn-secondary" type="button">Save</button>
+          <button id="btn-session-new" class="btn btn-secondary" type="button">New</button>
+          <button id="btn-session-list" class="btn btn-secondary" type="button">Sessions</button>
+          <button id="btn-export-csv" class="btn btn-primary" type="button">Export CSV</button>
+          <button id="btn-export-json" class="btn btn-secondary" type="button">Export JSON</button>
+        </div>
+      </section>
+
+      <!-- Optional Room Dimensions Panel (Collapsed by default, never required) -->
+      <details id="dimensions-panel" class="card dimensions-card">
+        <summary class="dimensions-summary">
+          <span class="dimensions-title">📐 Room Dimensions (Optional)</span>
+          <span id="dimensions-status-badge" class="badge badge-dim-status">Not set</span>
+        </summary>
+
+        <div class="dimensions-content">
+          <div class="segmented-group dimensions-unit-group" role="radiogroup" aria-label="Dimension Units">
+            <button id="btn-unit-metres" class="btn-segment active" aria-pressed="true" type="button">
+              Metres (m)
+            </button>
+            <button id="btn-unit-steps" class="btn-segment" aria-pressed="false" type="button">
+              Step Counts
+            </button>
+          </div>
+
+          <div id="steps-approx-note" class="steps-approx-note" hidden>
+            <span class="badge badge-approx">Approximate</span>
+            <span>Dimensions derived from pace steps (~0.7 m/step).</span>
+          </div>
+
+          <div class="dimensions-grid">
+            <div class="dim-field">
+              <label id="label-dim-length" for="input-dim-length" class="dim-label">Length (m)</label>
+              <input
+                id="input-dim-length"
+                class="form-input dim-input"
+                type="number"
+                step="0.1"
+                min="0.1"
+                placeholder="e.g. 6.0"
+              />
+            </div>
+            <div class="dim-field">
+              <label id="label-dim-width" for="input-dim-width" class="dim-label">Width (m)</label>
+              <input
+                id="input-dim-width"
+                class="form-input dim-input"
+                type="number"
+                step="0.1"
+                min="0.1"
+                placeholder="e.g. 4.0"
+              />
+            </div>
+            <div class="dim-field">
+              <label id="label-dim-height" for="input-dim-height" class="dim-label">Height (m)</label>
+              <input
+                id="input-dim-height"
+                class="form-input dim-input"
+                type="number"
+                step="0.1"
+                min="0.1"
+                placeholder="e.g. 2.8"
+              />
+            </div>
+            <div id="field-dim-step-len" class="dim-field" hidden>
+              <label for="input-dim-step-len" class="dim-label">Metres/Step</label>
+              <input
+                id="input-dim-step-len"
+                class="form-input dim-input"
+                type="number"
+                step="0.05"
+                min="0.2"
+                max="1.5"
+                value="0.70"
+              />
+            </div>
+          </div>
+
+          <div id="dim-aspect-sync-notice" class="dim-sync-notice" hidden></div>
+          <div id="dim-error-msg" class="dim-error-msg" hidden></div>
+
+          <div class="dimensions-actions">
+            <button id="btn-apply-dimensions" class="btn btn-primary" type="button">Apply Dimensions</button>
+            <button id="btn-clear-dimensions" class="btn btn-outline" type="button">Clear</button>
+          </div>
+        </div>
+      </details>
+
       <!-- Phase 4a: Floor Plan Workspace -->
       <section class="card floorplan-card">
         <div class="controls-row">
@@ -81,7 +192,7 @@
         <ul id="measurement-list" class="measurement-list"></ul>
       </section>
 
-      <section class="card quick-status" data-version="echomap-v3">
+      <section class="card quick-status" data-version="echomap-v4">
         <h3>System & PWA Status</h3>
         <dl class="status-list">
           <div>
@@ -98,10 +209,28 @@
           </div>
           <div>
             <dt>Build Version:</dt>
-            <dd id="status-version">v3 (echomap-v3)</dd>
+            <dd id="status-version">v4 (echomap-v4)</dd>
           </div>
         </dl>
       </section>
+      <!-- Saved Sessions Modal -->
+      <div id="modal-sessions" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-sessions-title">
+          <div class="modal-header">
+            <h2 id="modal-sessions-title" class="modal-title">Saved Sessions</h2>
+            <button id="btn-close-sessions-modal" class="btn-close-modal" aria-label="Close modal" type="button">✕</button>
+          </div>
+          <div class="modal-body">
+            <div id="saved-sessions-empty" class="empty-notice" hidden>
+              No saved sessions found. Sessions are automatically saved as you add points.
+            </div>
+            <ul id="saved-sessions-list" class="saved-sessions-list"></ul>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-modal-dismiss" class="btn btn-secondary" type="button">Close</button>
+          </div>
+        </div>
+      </div>
     </main>
 
     <!-- Safe SW Update Notification Banner -->

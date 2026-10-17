@@ -99,20 +99,35 @@ export function generateFakeMeasurementData(x = 0.5, y = 0.5, index = 1) {
 export class SessionModel {
   /**
    * @param {object} [initialState]
+   * @param {string|null} [initialState.id=null]
+   * @param {string} [initialState.name='Untitled Session']
+   * @param {number} [initialState.created]
+   * @param {number} [initialState.updated]
    * @param {string} [initialState.aspectRatio='4:3']
+   * @param {object|null} [initialState.roomDimensions=null]
    * @param {{ x: number, y: number }|null} [initialState.source=null]
    * @param {Array<object>} [initialState.measurements=[]]
    * @param {number} [initialState.activeBand=500]
    */
   constructor(initialState = {}) {
+    this.id = initialState.id || null;
+    this.name = initialState.name || 'Untitled Session';
+    this.created = initialState.created || Date.now();
+    this.updated = initialState.updated || Date.now();
     this.aspectRatio = initialState.aspectRatio || DEFAULT_ASPECT_RATIO_STR;
+    this.roomDimensions = initialState.roomDimensions ? { ...initialState.roomDimensions } : null;
     this.source = initialState.source
       ? {
           x: Math.max(0, Math.min(1, initialState.source.x)),
           y: Math.max(0, Math.min(1, initialState.source.y)),
         }
       : null;
-    this.measurements = Array.isArray(initialState.measurements) ? [...initialState.measurements] : [];
+    this.measurements = Array.isArray(initialState.measurements)
+      ? initialState.measurements.map((m) => ({
+          ...m,
+          bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
+        }))
+      : [];
     this.activeBand = initialState.activeBand || 500;
     this.selectedPointId = null;
     this._listeners = new Set();
@@ -132,6 +147,7 @@ export class SessionModel {
   }
 
   _notify(changeType, detail) {
+    this.updated = Date.now();
     for (const listener of this._listeners) {
       try {
         listener({ type: changeType, detail, model: this });
@@ -139,6 +155,21 @@ export class SessionModel {
         console.error('SessionModel listener error:', err);
       }
     }
+  }
+
+  setName(name) {
+    this.name = String(name).trim() || 'Untitled Session';
+    this._notify('name', { name: this.name });
+  }
+
+  setRoomDimensions(dimensions) {
+    this.roomDimensions = dimensions ? { ...dimensions } : null;
+    this._notify('roomDimensions', { roomDimensions: this.roomDimensions });
+  }
+
+  clearRoomDimensions() {
+    this.roomDimensions = null;
+    this._notify('roomDimensions', { roomDimensions: null });
   }
 
   get parsedAspectRatio() {
@@ -315,7 +346,12 @@ export class SessionModel {
    */
   toJSON() {
     return {
+      id: this.id,
+      name: this.name,
+      created: this.created,
+      updated: this.updated,
       aspectRatio: this.aspectRatio,
+      roomDimensions: this.roomDimensions ? { ...this.roomDimensions } : null,
       source: this.source ? { ...this.source } : null,
       measurements: this.measurements.map((m) => ({
         ...m,
@@ -324,4 +360,36 @@ export class SessionModel {
       activeBand: this.activeBand,
     };
   }
+
+  /**
+   * Load session data into the model and notify listeners.
+   *
+   * @param {object} session
+   */
+  loadSession(session) {
+    if (!session || typeof session !== 'object') return;
+    this.id = session.id || null;
+    this.name = session.name || 'Untitled Session';
+    this.created = session.created || Date.now();
+    this.updated = session.updated || Date.now();
+    this.aspectRatio = session.aspectRatio || DEFAULT_ASPECT_RATIO_STR;
+    this.roomDimensions = session.roomDimensions ? { ...session.roomDimensions } : null;
+    this.source = session.source
+      ? {
+          x: Math.max(0, Math.min(1, session.source.x)),
+          y: Math.max(0, Math.min(1, session.source.y)),
+        }
+      : null;
+    this.measurements = Array.isArray(session.measurements)
+      ? session.measurements.map((m) => ({
+          ...m,
+          bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
+        }))
+      : [];
+    this.activeBand = session.activeBand || 500;
+    this.selectedPointId = null;
+    this._nextId = this.measurements.reduce((max, m) => Math.max(max, m.id || 0), 0) + 1;
+    this._notify('session_loaded', { session: this.toJSON() });
+  }
 }
+
