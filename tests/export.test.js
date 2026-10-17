@@ -57,7 +57,7 @@ test('Export - toCSV emits exact column order when room dimensions are absent', 
 
   assert.equal(
     header,
-    'session,point_index,status,x_rel,y_rel,band_hz,t20,t30,edt,r2,used,tier,pnr_db,dynamic_range_db,clipped,fake,timestamp'
+    'session,point_index,status,x_rel,y_rel,band_hz,t20,t30,edt,r2,used,tier,pnr_db,dynamic_range_db,clipped,fake,source,low_confidence,timestamp'
   );
 
   // 1 pending point * 6 octave bands = 6 data rows
@@ -65,7 +65,7 @@ test('Export - toCSV emits exact column order when room dimensions are absent', 
 
   // Verify pending row has empty measurement data cells
   const firstDataRow = lines[1];
-  assert.equal(firstDataRow, 'No Dimensions Session,1,pending,0.4,0.6,125,,,,,,,,,,,');
+  assert.equal(firstDataRow, 'No Dimensions Session,1,pending,0.4,0.6,125,,,,,,,,,,,,,');
 });
 
 test('Export - toCSV includes x_m and y_m when dimensions exist, and marks them approximate for step counts', () => {
@@ -99,10 +99,10 @@ test('Export - toCSV includes x_m and y_m when dimensions exist, and marks them 
   const linesM = csvM.split('\r\n');
   assert.equal(
     linesM[0],
-    'session,point_index,status,x_rel,y_rel,x_m,y_m,band_hz,t20,t30,edt,r2,used,tier,pnr_db,dynamic_range_db,clipped,fake,timestamp'
+    'session,point_index,status,x_rel,y_rel,x_m,y_m,band_hz,t20,t30,edt,r2,used,tier,pnr_db,dynamic_range_db,clipped,fake,source,low_confidence,timestamp'
   );
   // x_m = 0.5 * 6 = 3.000, y_m = 0.25 * 4 = 1.000 (not approximate)
-  assert.equal(linesM[1], 'Studio M,1,pending,0.5,0.25,3.000,1.000,125,,,,,,,,,,,');
+  assert.equal(linesM[1], 'Studio M,1,pending,0.5,0.25,3.000,1.000,125,,,,,,,,,,,,,');
 
   // Step counts dimensions (approximate)
   const sessionSteps = {
@@ -133,10 +133,10 @@ test('Export - toCSV includes x_m and y_m when dimensions exist, and marks them 
   const csvSteps = toCSV(sessionSteps);
   const linesSteps = csvSteps.split('\r\n');
   // x_m = ~3.500, y_m = ~2.800 (marked approximate with ~)
-  assert.equal(linesSteps[1], 'Paced Room,1,pending,0.5,0.5,~3.500,~2.800,125,,,,,,,,,,,');
+  assert.equal(linesSteps[1], 'Paced Room,1,pending,0.5,0.5,~3.500,~2.800,125,,,,,,,,,,,,,');
 });
 
-test('Export - toCSV populates full measured row data with fake and tier columns intact', () => {
+test('Export - toCSV populates full measured row data with fake, source, and low_confidence columns intact', () => {
   const fakeData = generateFakeMeasurementData(0.5, 0.5, 1);
   const session = {
     name: 'Measured "Session", 1\nTake A',
@@ -152,6 +152,8 @@ test('Export - toCSV populates full measured row data with fake and tier columns
         dynamicRangeDb: 46.0,
         clipped: false,
         fake: true,
+        source: 'dev',
+        lowConfidence: false,
         bands: fakeData.bands,
       },
     ],
@@ -169,23 +171,55 @@ test('Export - toCSV populates full measured row data with fake and tier columns
   const row125 = lines[1];
   assert.ok(row125.startsWith('"Measured ""Session"", 1\nTake A",1,measured,0.5,0.5,125,'));
   assert.ok(row125.includes(',valid,'));
-  assert.ok(row125.includes(',true,1700000000000')); // fake=true, timestamp
+  assert.ok(row125.includes(',true,dev,false,1700000000000')); // fake=true, source=dev, lowConfidence=false, timestamp
 
   // Invalid band (4000 Hz) has empty values for invalid metrics but retains r2: 0.880
   const row4000 = lines[6];
-  assert.ok(row4000.includes(',4000,,,,0.880,none,invalid,42.5,46.0,false,true,1700000000000'));
+  assert.ok(row4000.includes(',4000,,,,0.880,none,invalid,42.5,46.0,false,true,dev,false,1700000000000'));
 });
 
-test('Export - toJSON serializes complete session state', () => {
+test('Export - toJSON serializes complete session state and preserves rounded downsampled plots without raw samples', () => {
   const session = {
+    schemaVersion: 2,
     id: 's_test',
     name: 'JSON Test',
     aspectRatio: '4:3',
     roomDimensions: null,
-    measurements: [],
+    measurements: [
+      {
+        id: 1,
+        x: 0.5,
+        y: 0.5,
+        status: 'measured',
+        source: 'wav',
+        fake: false,
+        irPlot: {
+          t: [0.0012, 0.0543, 0.1089],
+          values: [0.9876, 0.5432, 0.1234],
+        },
+        edcPlot: {
+          500: {
+            t: [0.0123, 0.0246],
+            edcDb: [-0.123, -5.678],
+          },
+        },
+      },
+    ],
   };
 
   const jsonStr = toJSON(session);
   const parsed = JSON.parse(jsonStr);
-  assert.deepEqual(parsed, session);
+  assert.equal(parsed.schemaVersion, 2);
+  assert.equal(parsed.measurements[0].source, 'wav');
+  assert.equal(parsed.measurements[0].fake, false);
+  // Verify plots are present in JSON
+  assert.ok(parsed.measurements[0].irPlot != null);
+  assert.ok(parsed.measurements[0].edcPlot != null);
+  // Verify raw samples are not in JSON
+  assert.equal(parsed.measurements[0].samples, undefined);
+
+  // CSV export does NOT include plot arrays
+  const csv = toCSV(session);
+  assert.strictEqual(csv.includes('irPlot'), false);
+  assert.strictEqual(csv.includes('edcPlot'), false);
 });

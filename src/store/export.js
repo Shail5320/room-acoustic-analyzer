@@ -42,7 +42,7 @@ export function escapeCSVCell(val) {
  */
 export function hasFakeMeasurements(session) {
   if (!session || !Array.isArray(session.measurements)) return false;
-  return session.measurements.some((m) => Boolean(m.fake));
+  return session.measurements.some((m) => Boolean(m.fake) || Boolean(m.simulated) || m.source === 'dev' || m.source === 'selftest');
 }
 
 /**
@@ -96,6 +96,8 @@ export function toCSV(session) {
         'dynamic_range_db',
         'clipped',
         'fake',
+        'source',
+        'low_confidence',
         'timestamp',
       ]
     : [
@@ -115,6 +117,8 @@ export function toCSV(session) {
         'dynamic_range_db',
         'clipped',
         'fake',
+        'source',
+        'low_confidence',
         'timestamp',
       ];
 
@@ -155,8 +159,8 @@ export function toCSV(session) {
         }
         // band_hz
         row.push(band);
-        // empty measurement data cells: t20, t30, edt, r2, used, tier, pnr_db, dynamic_range_db, clipped, fake, timestamp
-        row.push('', '', '', '', '', '', '', '', '', '', '');
+        // empty measurement data cells: t20, t30, edt, r2, used, tier, pnr_db, dynamic_range_db, clipped, fake, source, low_confidence, timestamp
+        row.push('', '', '', '', '', '', '', '', '', '', '', '', '');
         lines.push(row.join(','));
       }
     } else {
@@ -193,6 +197,8 @@ export function toCSV(session) {
           Number.isFinite(m.dynamicRangeDb) ? m.dynamicRangeDb.toFixed(1) : '',
           m.clipped ? 'true' : 'false',
           m.fake ? 'true' : 'false',
+          escapeCSVCell(m.source || (m.fake ? 'dev' : 'wav')),
+          m.lowConfidence ? 'true' : 'false',
           m.timestamp ? m.timestamp : ''
         );
 

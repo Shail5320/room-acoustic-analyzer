@@ -1068,5 +1068,400 @@ details[open] .dimensions-summary::after {
   margin-top: 4px;
 }
 
+/* ==========================================================================
+   Phase 3a: Audio Recording Analysis & Simulation Card
+   ========================================================================== */
+
+.analyze-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.analyze-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.analyze-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.btn-sm {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+}
+
+/* Two-Device Help Box */
+.help-box {
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.help-summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--primary-color);
+  user-select: none;
+}
+
+.help-content {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.help-steps {
+  margin: 6px 0 0 18px;
+  padding: 0;
+}
+
+.help-steps li {
+  margin-bottom: 4px;
+}
+
+/* Inputs & Self-Test Row */
+.analyze-inputs-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (min-width: 600px) {
+  .analyze-inputs-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.file-picker-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.file-picker-label {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+}
+
+.file-name-display {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selftest-inline-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background-color: var(--surface-color);
+  border: 1px dashed var(--border-color);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.selftest-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.selftest-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-rt60 {
+  width: 90px;
+  accent-color: var(--primary-color);
+}
+
+.selftest-val-badge {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  min-width: 38px;
+}
+
+/* Progress Bar */
+.analyze-progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.progress-bar-bg {
+  width: 100%;
+  height: 8px;
+  background-color: var(--surface-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background-color: var(--primary-color);
+  transition: width 0.15s ease-out;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.execution-mode-badge {
+  font-weight: 600;
+  text-transform: lowercase;
+  background-color: var(--surface-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+/* Rejection Card */
+.analyze-reject-card {
+  background-color: rgba(186, 26, 26, 0.1);
+  border: 1px solid var(--danger-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reject-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger-color);
+}
+
+.reject-advice {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.analyze-override-row {
+  margin-top: 4px;
+}
+
+.btn-warning {
+  background-color: #f59e0b;
+  color: #000;
+  font-weight: 700;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-warning:hover {
+  background-color: #d97706;
+}
+
+/* Results Display */
+.analyze-results-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.analyze-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge-simulated {
+  background-color: #ea580c;
+  color: #fff;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+.badge-warning {
+  background-color: rgba(245, 158, 11, 0.2);
+  border: 1px solid #f59e0b;
+  color: #f59e0b;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.audio-info-text {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+/* KPI Grid */
+.acoustic-kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+@media (min-width: 550px) {
+  .acoustic-kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.kpi-card {
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kpi-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.kpi-value {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--primary-color);
+}
+
+.kpi-help {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+/* Plots Grid */
+.plots-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 650px) {
+  .plots-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.plot-box {
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plot-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.plot-canvas {
+  width: 100%;
+  height: 140px;
+  background-color: var(--card-background);
+  border-radius: 4px;
+  display: block;
+}
+
+/* Acoustic Table */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.acoustic-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  text-align: left;
+}
+
+.acoustic-table th {
+  background-color: var(--surface-color);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.acoustic-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+.acoustic-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Attach Row */
+.attach-point-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background-color: var(--surface-color);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.attach-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.select-attach-point {
+  max-width: 250px;
+}
+
+.attach-success-msg {
+  color: #10b981;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
 
 

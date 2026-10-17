@@ -131,3 +131,117 @@ test('Storage - Sessions list sorts by updated descending', async () => {
   assert.equal(list[1].id, 's3'); // 1500
   assert.equal(list[2].id, 's1'); // 1000
 });
+
+test('Storage - Migrates old unversioned session: fake: true -> source "dev", otherwise "wav", schemaVersion: 2', async () => {
+  const adapter = new MemoryStorageAdapter();
+  const storage = new StorageService(adapter);
+
+  // Raw unversioned session saved directly in store (as if from older app version)
+  const legacySession = {
+    id: 'legacy_1',
+    name: 'Old Session',
+    aspectRatio: '4:3',
+    measurements: [
+      {
+        id: 1,
+        x: 0.2,
+        y: 0.3,
+        status: 'measured',
+        fake: true,
+        // no source property
+      },
+      {
+        id: 2,
+        x: 0.6,
+        y: 0.7,
+        status: 'measured',
+        fake: false,
+        // no source property
+      },
+    ],
+  };
+
+  await adapter.saveSession(legacySession);
+
+  // Load through storage service which invokes migrateSession
+  const loaded = await storage.get('legacy_1');
+  assert.equal(loaded.schemaVersion, 2, 'schemaVersion must be 2');
+  assert.equal(loaded.measurements[0].source, 'dev', 'fake: true must become source: "dev"');
+  assert.equal(loaded.measurements[1].source, 'wav', 'real measurement must become source: "wav"');
+  assert.equal(loaded.measurements[0].simulated, false);
+  assert.equal(loaded.measurements[1].lowConfidence, false);
+});
+
+test('Storage & Model - attachMeasurement attaches to pending point, rounds plots, and exports source', async () => {
+  const { SessionModel } = await import('../src/ui/session-model.js');
+  const { toCSV } = await import('../src/store/export.js');
+  const model = new SessionModel();
+
+  // 1. Add pending point
+  const pending = model.addPendingMeasurement(0.3, 0.4);
+  assert.equal(pending.status, 'pending');
+
+  // 2. Attach WAV measurement
+  const wavAnalysis = {
+    ok: true,
+    pnrDb: 42.567,
+    dynamicRangeDb: 35.123,
+    clipped: false,
+    fake: false,
+    source: 'wav',
+    fileName: 'hall_sweep.wav',
+    originalSampleRate: 48000,
+    samples: new Float32Array([0.1, 0.2, 0.3]), // Raw samples must be discarded
+    irPlot: {
+      t: [0.00111, 0.00222],
+      values: [0.98765, -0.43219],
+    },
+    edcPlot: {
+      500: {
+        t: [0.1234, 0.2345],
+        edcDb: [-5.6789, -12.3456],
+      },
+    },
+    bands: {
+      500: { t20: 0.812, t30: 0.825, edt: 0.795, r2: 0.998, used: 'T30', tier: 'valid', rt60: 0.825 },
+    },
+  };
+
+  const attachedWav = model.attachMeasurement(pending.id, wavAnalysis);
+  assert.equal(attachedWav.id, pending.id);
+  assert.equal(attachedWav.status, 'measured');
+  assert.equal(attachedWav.source, 'wav');
+  assert.equal(attachedWav.fileName, 'hall_sweep.wav');
+  assert.equal(attachedWav.originalSampleRate, 48000);
+  assert.equal(attachedWav.samples, undefined, 'raw samples must NOT be retained');
+  // Check plot rounding to 2 decimals
+  assert.deepEqual(attachedWav.irPlot, { t: [0, 0], values: [0.99, -0.43] });
+  assert.deepEqual(attachedWav.edcPlot[500], { t: [0.12, 0.23], edcDb: [-5.68, -12.35] });
+
+  // 3. Attach selftest measurement as a new point
+  const selftestAnalysis = {
+    ok: true,
+    pnrDb: 30.1,
+    dynamicRangeDb: 40.2,
+    clipped: false,
+    fake: true,
+    simulated: true,
+    source: 'selftest',
+    lowConfidence: false,
+    bands: {
+      500: { t20: 0.501, t30: 0.503, edt: 0.498, r2: 0.999, used: 'T30', tier: 'valid', rt60: 0.503 },
+    },
+  };
+  const attachedSim = model.attachMeasurement(null, selftestAnalysis);
+  assert.equal(attachedSim.source, 'selftest');
+  assert.equal(attachedSim.fake, true);
+  assert.equal(attachedSim.simulated, true);
+
+  // 4. Verify CSV export contains source and low_confidence columns
+  const csv = toCSV(model.toJSON());
+  assert.ok(csv.includes(',source,low_confidence,'));
+  assert.ok(csv.includes(',wav,false,'));
+  assert.ok(csv.includes(',selftest,false,'));
+});
+
+

@@ -167,10 +167,165 @@
         </button>
       </section>
 
+      <!-- Phase 3a: Audio Recording Analysis & Simulation Card -->
+      <section id="analyze-card" class="card analyze-card">
+        <div class="analyze-header">
+          <h2 class="analyze-title">🎙️ Analyze Recording</h2>
+          <div class="analyze-actions-top">
+            <button id="btn-download-sweep" class="btn btn-secondary btn-sm" type="button" title="Download 48 kHz 16-bit PCM test sweep WAV">
+              Download test sweep
+            </button>
+          </div>
+        </div>
+
+        <!-- Two-Device Capture Help Text -->
+        <details class="help-box" id="two-device-help">
+          <summary class="help-summary">ℹ️ How to record with two devices</summary>
+          <div class="help-content">
+            <ol class="help-steps">
+              <li>Play the test sweep from a second device (phone, laptop, speaker) at a fixed position and moderate volume.</li>
+              <li>Turn <strong>OFF</strong> equalisers, spatial audio, and loudness enhancement on the playback device.</li>
+              <li>Turn <strong>OFF</strong> noise reduction, voice isolation, and auto-gain (AGC) on the recording device.</li>
+              <li>Start recording first, then play. Record the whole sweep plus at least 3 s of decay (record at least 15 s total).</li>
+              <li>Save as WAV or lossless if possible. Compressed recordings (m4a, mp3) work but may be less accurate.</li>
+            </ol>
+          </div>
+        </details>
+
+        <!-- File Picker & Self-Test Simulation Controls -->
+        <div class="analyze-inputs-row">
+          <div class="file-picker-wrapper">
+            <label for="input-audio-file" class="btn btn-primary file-picker-label">
+              Choose audio file (WAV / M4A / MP3)
+            </label>
+            <input
+              type="file"
+              id="input-audio-file"
+              class="visually-hidden"
+              accept=".wav,audio/wav,audio/x-wav,.m4a,.mp3,audio/*"
+            />
+            <span id="selected-file-name" class="file-name-display">No file selected</span>
+          </div>
+
+          <div class="selftest-inline-panel">
+            <span class="selftest-label">Simulate room:</span>
+            <div class="selftest-controls">
+              <label for="slider-selftest-rt60" class="visually-hidden">Target RT60</label>
+              <input
+                type="range"
+                id="slider-selftest-rt60"
+                min="0.3"
+                max="1.5"
+                step="0.1"
+                value="0.8"
+                class="slider-rt60"
+              />
+              <span id="selftest-rt-val" class="selftest-val-badge">0.8 s</span>
+              <button id="btn-run-selftest" class="btn btn-secondary btn-sm" type="button">
+                Run Simulation
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Worker Progress & Execution Mode -->
+        <div id="analyze-progress-container" class="analyze-progress-container" hidden>
+          <div class="progress-bar-bg">
+            <div id="analyze-progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="analyze-progress-message" class="progress-message">Starting analysis...</span>
+            <span id="analyze-execution-mode" class="execution-mode-badge">analysed in: worker</span>
+          </div>
+        </div>
+
+        <!-- Rejection / Error Card -->
+        <div id="analyze-reject-card" class="analyze-reject-card" hidden>
+          <div class="reject-header">
+            <span class="reject-icon">⚠️</span>
+            <strong id="analyze-reject-reason" class="reject-reason">Analysis failed</strong>
+          </div>
+          <p id="analyze-reject-advice" class="reject-advice"></p>
+          <div id="analyze-override-row" class="analyze-override-row" hidden>
+            <button id="btn-override-low-pnr" class="btn btn-warning btn-sm" type="button">
+              Analyze anyway (low confidence)
+            </button>
+          </div>
+        </div>
+
+        <!-- Analysis Results Container -->
+        <div id="analyze-results-container" class="analyze-results-container" hidden>
+          <!-- Banners & Badges -->
+          <div class="analyze-badges-row">
+            <div id="badge-simulated" class="badge badge-simulated" hidden>SIMULATED</div>
+            <div id="badge-clipped" class="badge badge-warning" hidden>Clipped</div>
+            <div id="badge-truncated" class="badge badge-warning" hidden>Decay Truncated</div>
+            <div id="badge-low-confidence" class="badge badge-warning" hidden>Low Confidence</div>
+            <span id="analyze-audio-info" class="audio-info-text"></span>
+          </div>
+
+          <!-- Key Metrics: Sweep Detection (PNR) & Usable Decay Depth (DR) -->
+          <div class="acoustic-kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-label">Sweep detection (PNR)</div>
+              <div id="val-pnr" class="kpi-value">—</div>
+              <div class="kpi-help">Margin between direct sound arrival and pre-sweep background noise.</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Usable decay depth (dynamic range)</div>
+              <div id="val-dr" class="kpi-value">—</div>
+              <div class="kpi-help">Weakest octave band's decay range before hitting noise floor.</div>
+            </div>
+          </div>
+
+          <!-- Plots: Waveform & Schroeder EDC Curves -->
+          <div class="plots-grid">
+            <div class="plot-box">
+              <div class="plot-title">Impulse Response (IR)</div>
+              <canvas id="canvas-ir-plot" class="plot-canvas" width="400" height="140"></canvas>
+            </div>
+            <div class="plot-box">
+              <div class="plot-title">Schroeder Decay Curves (EDC)</div>
+              <canvas id="canvas-edc-plot" class="plot-canvas" width="400" height="140"></canvas>
+            </div>
+          </div>
+
+          <!-- Octave Band Results Table -->
+          <div class="table-responsive">
+            <table class="table acoustic-table">
+              <thead>
+                <tr>
+                  <th>Band</th>
+                  <th>T20 (s)</th>
+                  <th>T30 (s)</th>
+                  <th>EDT (s)</th>
+                  <th>R²</th>
+                  <th>Used</th>
+                  <th>Tier</th>
+                </tr>
+              </thead>
+              <tbody id="analyze-bands-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- Attach to Floor Plan Point Controls -->
+          <div class="attach-point-row">
+            <label for="select-attach-point" class="attach-label">Attach to floor plan:</label>
+            <select id="select-attach-point" class="form-select select-attach-point">
+              <option value="new">+ Add as new measurement point</option>
+            </select>
+            <button id="btn-attach-to-point" class="btn btn-primary" type="button">
+              Attach to point
+            </button>
+            <span id="attach-success-msg" class="attach-success-msg" hidden>✓ Attached!</span>
+          </div>
+        </div>
+      </section>
+
       <!-- Phase 5: Heatmap Controls & Legend -->
       <section id="heatmap-card" class="card heatmap-card" hidden>
         <div id="heatmap-dev-banner" class="heatmap-dev-banner" hidden>
-          ⚠️ DEV DATA — contains simulated test measurements
+          ⚠️ SIMULATED / DEV DATA — contains simulated test measurements
         </div>
 
         <div id="heatmap-unreliable-banner" class="heatmap-unreliable-banner" hidden>
@@ -234,7 +389,7 @@
         <ul id="measurement-list" class="measurement-list"></ul>
       </section>
 
-      <section class="card quick-status" data-version="echomap-v6">
+      <section class="card quick-status" data-version="echomap-v8">
         <h3>System & PWA Status</h3>
         <dl class="status-list">
           <div>
@@ -251,7 +406,7 @@
           </div>
           <div>
             <dt>Build Version:</dt>
-            <dd id="status-version">v6 (echomap-v6)</dd>
+            <dd id="status-version">v8 (echomap-v8)</dd>
           </div>
         </dl>
       </section>

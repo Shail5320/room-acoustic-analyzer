@@ -21,6 +21,13 @@ import {
   formatAspectRatio,
 } from './coordinates.js';
 
+import {
+  roundPlot,
+  roundEdcPlot,
+  migrateSession,
+  SCHEMA_VERSION,
+} from '../store/storage.js';
+
 export { getExactAspectRatio, aspectCorrectedDistance, formatAspectRatio };
 
 export const OCTAVE_BANDS = [125, 250, 500, 1000, 2000, 4000];
@@ -101,7 +108,14 @@ export function generateFakeMeasurementData(x = 0.5, y = 0.5, index = 1) {
     dynamicRangeDb: Math.round((46.0 + ((index * 2) % 6)) * 10) / 10,
     clipped: false,
     fake: true,
+    source: 'dev',
+    simulated: false,
+    lowConfidence: false,
+    fileName: null,
+    originalSampleRate: null,
     bands,
+    irPlot: null,
+    edcPlot: null,
   };
 }
 
@@ -119,6 +133,7 @@ export class SessionModel {
    * @param {number} [initialState.activeBand=500]
    */
   constructor(initialState = {}) {
+    this.schemaVersion = initialState.schemaVersion || SCHEMA_VERSION;
     this.id = initialState.id || null;
     this.name = initialState.name || 'Untitled Session';
     this.created = initialState.created || Date.now();
@@ -151,7 +166,14 @@ export class SessionModel {
     this.measurements = Array.isArray(initialState.measurements)
       ? initialState.measurements.map((m) => ({
           ...m,
+          source: m.source || (m.fake ? 'dev' : 'wav'),
+          simulated: Boolean(m.simulated),
+          lowConfidence: Boolean(m.lowConfidence),
+          fileName: m.fileName || null,
+          originalSampleRate: m.originalSampleRate || null,
           bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
+          irPlot: roundPlot(m.irPlot),
+          edcPlot: roundEdcPlot(m.edcPlot),
         }))
       : [];
     this.activeBand = initialState.activeBand || 500;
@@ -267,7 +289,14 @@ export class SessionModel {
       dynamicRangeDb: null,
       clipped: false,
       fake: false,
+      source: null,
+      simulated: false,
+      lowConfidence: false,
+      fileName: null,
+      originalSampleRate: null,
       bands: null,
+      irPlot: null,
+      edcPlot: null,
     };
     this.measurements.push(point);
     this.selectedPointId = point.id;
@@ -292,14 +321,71 @@ export class SessionModel {
       timestamp: data.timestamp ?? Date.now(),
       pnrDb: data.pnrDb ?? null,
       dynamicRangeDb: data.dynamicRangeDb ?? null,
-      clipped: data.clipped ?? false,
-      fake: data.fake ?? false,
-      bands: data.bands || null,
+      clipped: Boolean(data.clipped),
+      fake: Boolean(data.fake),
+      source: data.source || (data.fake ? 'dev' : 'wav'),
+      simulated: Boolean(data.simulated),
+      lowConfidence: Boolean(data.lowConfidence),
+      fileName: data.fileName || null,
+      originalSampleRate: data.originalSampleRate || data.sampleRate || null,
+      bands: data.bands ? JSON.parse(JSON.stringify(data.bands)) : null,
+      irPlot: roundPlot(data.irPlot),
+      edcPlot: roundEdcPlot(data.edcPlot),
     };
     this.measurements.push(point);
     this.selectedPointId = point.id;
     this._notify('measurement_added', { point });
     return point;
+  }
+
+  /**
+   * Attach an acoustic analysis result to a measurement point (pending point or new point).
+   *
+   * @param {number|null} pointId — target pending point id, or null for latest pending / new point
+   * @param {object} measurementData — analysis output from pipeline or worker
+   * @returns {object} updated or created measurement point
+   */
+  attachMeasurement(pointId = null, measurementData = {}) {
+    let point = null;
+    if (pointId != null) {
+      point = this.getMeasurement(pointId);
+    }
+    if (!point && this.selectedPointId != null) {
+      const sel = this.getMeasurement(this.selectedPointId);
+      if (sel && sel.status === 'pending') point = sel;
+    }
+    if (!point) {
+      for (let i = this.measurements.length - 1; i >= 0; i--) {
+        if (this.measurements[i].status === 'pending') {
+          point = this.measurements[i];
+          break;
+        }
+      }
+    }
+
+    if (point) {
+      point.status = 'measured';
+      point.timestamp = measurementData.timestamp ?? Date.now();
+      point.pnrDb = measurementData.pnrDb ?? null;
+      point.dynamicRangeDb = measurementData.dynamicRangeDb ?? null;
+      point.clipped = Boolean(measurementData.clipped);
+      point.fake = Boolean(measurementData.fake);
+      point.source = measurementData.source || (measurementData.fake ? 'dev' : 'wav');
+      point.simulated = Boolean(measurementData.simulated);
+      point.lowConfidence = Boolean(measurementData.lowConfidence);
+      point.fileName = measurementData.fileName || null;
+      point.originalSampleRate = measurementData.originalSampleRate || measurementData.sampleRate || null;
+      point.bands = measurementData.bands ? JSON.parse(JSON.stringify(measurementData.bands)) : null;
+      point.irPlot = roundPlot(measurementData.irPlot);
+      point.edcPlot = roundEdcPlot(measurementData.edcPlot);
+      delete point.samples;
+
+      this.selectedPointId = point.id;
+      this._notify('measurement_updated', { point });
+      return point;
+    }
+
+    return this.addMeasuredMeasurement(0.5, 0.5, measurementData);
   }
 
   /**
@@ -341,7 +427,14 @@ export class SessionModel {
       point.dynamicRangeDb = fakeData.dynamicRangeDb;
       point.clipped = fakeData.clipped;
       point.fake = true;
+      point.source = 'dev';
+      point.simulated = false;
+      point.lowConfidence = false;
+      point.fileName = null;
+      point.originalSampleRate = null;
       point.bands = fakeData.bands;
+      point.irPlot = null;
+      point.edcPlot = null;
       this.selectedPointId = point.id;
       this._notify('measurement_updated', { point });
       return point;
@@ -393,6 +486,7 @@ export class SessionModel {
    */
   toJSON() {
     return {
+      schemaVersion: this.schemaVersion || SCHEMA_VERSION,
       id: this.id,
       name: this.name,
       created: this.created,
@@ -400,58 +494,65 @@ export class SessionModel {
       aspectRatio: this.exactAspectRatio,
       roomDimensions: this.roomDimensions ? { ...this.roomDimensions } : null,
       source: this.source ? { ...this.source } : null,
-      measurements: this.measurements.map((m) => ({
-        ...m,
-        bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
-      })),
+      measurements: this.measurements.map((m) => {
+        const clean = {
+          id: m.id,
+          x: m.x,
+          y: m.y,
+          status: m.status || 'pending',
+          timestamp: m.timestamp ?? null,
+          pnrDb: m.pnrDb ?? null,
+          dynamicRangeDb: m.dynamicRangeDb ?? null,
+          clipped: Boolean(m.clipped),
+          fake: Boolean(m.fake),
+          source: m.source || (m.fake ? 'dev' : 'wav'),
+          simulated: Boolean(m.simulated),
+          lowConfidence: Boolean(m.lowConfidence),
+          fileName: m.fileName || null,
+          originalSampleRate: m.originalSampleRate || null,
+          bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
+          irPlot: roundPlot(m.irPlot),
+          edcPlot: roundEdcPlot(m.edcPlot),
+        };
+        delete clean.samples;
+        return clean;
+      }),
       activeBand: this.activeBand,
     };
   }
 
   /**
    * Load session data into the model and notify listeners.
-   * Migrates old sessions with string aspectRatio or rounded ratios.
+   * Migrates old sessions with string aspectRatio or unversioned schema.
    *
    * @param {object} session
    */
   loadSession(session) {
     if (!session || typeof session !== 'object') return;
-    this.id = session.id || null;
-    this.name = session.name || 'Untitled Session';
-    this.created = session.created || Date.now();
-    this.updated = session.updated || Date.now();
-    this.roomDimensions = session.roomDimensions ? { ...session.roomDimensions } : null;
+    const migrated = migrateSession(JSON.parse(JSON.stringify(session)));
 
-    // Migrate old sessions on load: exact numeric ratio from dimensions if present, otherwise stored numeric value
-    if (
-      this.roomDimensions &&
-      Number.isFinite(this.roomDimensions.lengthM) &&
-      Number.isFinite(this.roomDimensions.widthM) &&
-      this.roomDimensions.lengthM > 0 &&
-      this.roomDimensions.widthM > 0
-    ) {
-      this.aspectRatio = this.roomDimensions.lengthM / this.roomDimensions.widthM;
-    } else if (session.aspectRatio != null) {
-      this.aspectRatio = typeof session.aspectRatio === 'number' && Number.isFinite(session.aspectRatio) && session.aspectRatio > 0
-        ? session.aspectRatio
-        : parseAspectRatio(session.aspectRatio);
-    } else {
-      this.aspectRatio = DEFAULT_ASPECT_RATIO;
-    }
-
-    this.source = session.source
-      ? {
-          x: Math.max(0, Math.min(1, session.source.x)),
-          y: Math.max(0, Math.min(1, session.source.y)),
-        }
-      : null;
-    this.measurements = Array.isArray(session.measurements)
-      ? session.measurements.map((m) => ({
+    this.schemaVersion = migrated.schemaVersion || SCHEMA_VERSION;
+    this.id = migrated.id || null;
+    this.name = migrated.name || 'Untitled Session';
+    this.created = migrated.created || Date.now();
+    this.updated = migrated.updated || Date.now();
+    this.roomDimensions = migrated.roomDimensions ? { ...migrated.roomDimensions } : null;
+    this.aspectRatio = migrated.aspectRatio || DEFAULT_ASPECT_RATIO;
+    this.source = migrated.source ? { ...migrated.source } : null;
+    this.measurements = Array.isArray(migrated.measurements)
+      ? migrated.measurements.map((m) => ({
           ...m,
+          source: m.source || (m.fake ? 'dev' : 'wav'),
+          simulated: Boolean(m.simulated),
+          lowConfidence: Boolean(m.lowConfidence),
+          fileName: m.fileName || null,
+          originalSampleRate: m.originalSampleRate || null,
           bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
+          irPlot: roundPlot(m.irPlot),
+          edcPlot: roundEdcPlot(m.edcPlot),
         }))
       : [];
-    this.activeBand = session.activeBand || 500;
+    this.activeBand = migrated.activeBand || 500;
     this.selectedPointId = null;
     this._nextId = this.measurements.reduce((max, m) => Math.max(max, m.id || 0), 0) + 1;
     this._notify('session_loaded', { session: this.toJSON() });

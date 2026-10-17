@@ -26,7 +26,11 @@ export async function runAnalysis(samples, sampleRate, onProgress = null, option
 
   if (!hasWorkerSupport) {
     console.warn('[runAnalysis] Web Worker is unavailable in this environment, falling back to main thread execution');
-    return analyzeRecording({ samples, sampleRate, onProgress, options });
+    const res = analyzeRecording({ samples, sampleRate, onProgress, options });
+    if (res && typeof res === 'object') {
+      res.executionMode = 'main';
+    }
+    return res;
   }
 
   return new Promise((resolve) => {
@@ -47,6 +51,9 @@ export async function runAnalysis(samples, sampleRate, onProgress = null, option
       console.warn(`[runAnalysis] Web Worker failed (${reason}), falling back to main thread execution`);
       try {
         const result = analyzeRecording({ samples, sampleRate, onProgress, options });
+        if (result && typeof result === 'object') {
+          result.executionMode = 'main';
+        }
         resolve(result);
       } catch (fallbackErr) {
         resolve({
@@ -54,6 +61,8 @@ export async function runAnalysis(samples, sampleRate, onProgress = null, option
           rejectReason: fallbackErr && fallbackErr.message ? fallbackErr.message : String(fallbackErr),
           warning: null,
           decayTruncated: false,
+          canOverrideLowPnr: false,
+          lowConfidence: false,
           pnrDb: 0,
           dynamicRangeDb: 0,
           weakestBandHz: null,
@@ -61,6 +70,7 @@ export async function runAnalysis(samples, sampleRate, onProgress = null, option
           irPlot: null,
           edcPlot: null,
           bands: null,
+          executionMode: 'main',
           timingsMs: { sweepMs: 0, deconvolveMs: 0, filteringMs: 0, rt60Ms: 0, totalMs: 0 },
         });
       }
@@ -85,7 +95,9 @@ export async function runAnalysis(samples, sampleRate, onProgress = null, option
           }
         } else if (msg.type === 'result') {
           cleanup();
-          resolve(msg.data);
+          const res = msg.data || {};
+          res.executionMode = 'worker';
+          resolve(res);
         } else if (msg.type === 'error') {
           fallbackToMainThread(msg.error || 'Worker execution error');
         }

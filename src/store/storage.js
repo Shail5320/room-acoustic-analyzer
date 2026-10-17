@@ -19,6 +19,7 @@ import {
 export const DB_NAME = 'echomap-db';
 export const DB_VERSION = 1;
 export const STORE_NAME = 'sessions';
+export const SCHEMA_VERSION = 2;
 
 /**
  * Generate a unique session ID.
@@ -247,9 +248,42 @@ export class IndexedDBAdapter {
 }
 
 /**
+ * Round 1D downsampled plot to 2 decimals for compact, human-readable session storage.
+ *
+ * @param {{ t: ArrayLike<number>, values: ArrayLike<number> }|null} plot
+ * @returns {{ t: number[], values: number[] }|null}
+ */
+export function roundPlot(plot) {
+  if (!plot || !plot.t || !plot.values) return null;
+  const t = Array.from(plot.t).map((v) => Math.round(v * 100) / 100);
+  const values = Array.from(plot.values).map((v) => Math.round(v * 100) / 100);
+  return { t, values };
+}
+
+/**
+ * Round per-band EDC curves to 2 decimals for session storage.
+ *
+ * @param {object|null} edcPlot
+ * @returns {object|null}
+ */
+export function roundEdcPlot(edcPlot) {
+  if (!edcPlot || typeof edcPlot !== 'object') return null;
+  const res = {};
+  for (const [fc, curve] of Object.entries(edcPlot)) {
+    if (!curve || !curve.t || !curve.edcDb) continue;
+    res[fc] = {
+      t: Array.from(curve.t).map((v) => Math.round(v * 100) / 100),
+      edcDb: Array.from(curve.edcDb).map((v) => Math.round(v * 100) / 100),
+    };
+  }
+  return res;
+}
+
+/**
  * Migrate old sessions on load.
  * Converts string / rounded aspect ratios (e.g. "1.67:1", "4:3") to exact numeric ratio R = width/height.
  * Uses dimensions when present (lengthM / widthM), otherwise stored numeric value.
+ * Migrates unversioned sessions (< 2) to schemaVersion: 2 (sets source: 'dev' or 'wav').
  *
  * @param {object} session
  * @returns {object} migrated session
@@ -272,6 +306,22 @@ export function migrateSession(session) {
       : parseAspectRatio(session.aspectRatio);
   } else {
     session.aspectRatio = DEFAULT_ASPECT_RATIO;
+  }
+
+  // Schema version 2 migration
+  if (!session.schemaVersion || session.schemaVersion < 2) {
+    if (Array.isArray(session.measurements)) {
+      for (const m of session.measurements) {
+        if (!m.source) {
+          m.source = m.fake ? 'dev' : 'wav';
+        }
+        m.lowConfidence = Boolean(m.lowConfidence);
+        m.simulated = Boolean(m.simulated);
+        if (m.irPlot) m.irPlot = roundPlot(m.irPlot);
+        if (m.edcPlot) m.edcPlot = roundEdcPlot(m.edcPlot);
+      }
+    }
+    session.schemaVersion = 2;
   }
 
   return session;
@@ -352,6 +402,7 @@ export class StorageService {
     }
 
     const sessionToSave = {
+      schemaVersion: SCHEMA_VERSION,
       id: session.id || generateSessionId(),
       name: (session.name && session.name.trim()) || 'Untitled Session',
       created: session.created || now,
@@ -360,18 +411,29 @@ export class StorageService {
       roomDimensions: dims ? { ...dims } : null,
       source: session.source ? { ...session.source } : null,
       measurements: Array.isArray(session.measurements)
-        ? session.measurements.map((m) => ({
-            id: m.id,
-            x: m.x,
-            y: m.y,
-            status: m.status || 'pending',
-            timestamp: m.timestamp ?? null,
-            pnrDb: m.pnrDb ?? null,
-            dynamicRangeDb: m.dynamicRangeDb ?? null,
-            clipped: Boolean(m.clipped),
-            fake: Boolean(m.fake),
-            bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
-          }))
+        ? session.measurements.map((m) => {
+            const clean = {
+              id: m.id,
+              x: m.x,
+              y: m.y,
+              status: m.status || 'pending',
+              timestamp: m.timestamp ?? null,
+              pnrDb: m.pnrDb ?? null,
+              dynamicRangeDb: m.dynamicRangeDb ?? null,
+              clipped: Boolean(m.clipped),
+              fake: Boolean(m.fake),
+              source: m.source || (m.fake ? 'dev' : 'wav'),
+              simulated: Boolean(m.simulated),
+              lowConfidence: Boolean(m.lowConfidence),
+              fileName: m.fileName || null,
+              originalSampleRate: m.originalSampleRate || null,
+              bands: m.bands ? JSON.parse(JSON.stringify(m.bands)) : null,
+              irPlot: roundPlot(m.irPlot),
+              edcPlot: roundEdcPlot(m.edcPlot),
+            };
+            delete clean.samples;
+            return clean;
+          })
         : [],
     };
 

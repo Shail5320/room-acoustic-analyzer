@@ -17,6 +17,8 @@ export const SWEEP_FADE_MS = 20.0;   // Half-Hann fade in/out length (ms)
 // Rejection and Validation Thresholds
 // ---------------------------------------------------------------------------
 export const PNR_THRESHOLD_DB = 20.0;         // Minimum peak-to-noise ratio (dB)
+export const LOW_PNR_OVERRIDE_MIN_DB = 10.0;  // Floor for conditional PNR override (dB)
+export const LOW_PNR_POST_PRE_MARGIN_DB = 1.5; // Minimum post-peak (200ms) vs pre-peak energy margin (dB)
 export const MIN_SAMPLE_RATE = 22050;         // Minimum recording sample rate (Hz)
 export const MIN_RECORDING_DURATION_S = 8.0;  // T + 3 s tail = 8.0 s
 export const MAX_RECORDING_DURATION_S = 30.0; // Memory guard (30.0 s)
@@ -39,6 +41,8 @@ export const PIPELINE_CONFIG = {
   T: SWEEP_DURATION_S,
   fadeMs: SWEEP_FADE_MS,
   pnrThresholdDb: PNR_THRESHOLD_DB,
+  lowPnrOverrideMinDb: LOW_PNR_OVERRIDE_MIN_DB,
+  lowPnrPostPreMarginDb: LOW_PNR_POST_PRE_MARGIN_DB,
   minSampleRate: MIN_SAMPLE_RATE,
   minDurationS: MIN_RECORDING_DURATION_S,
   maxDurationS: MAX_RECORDING_DURATION_S,

@@ -27,6 +27,8 @@ import {
   SWEEP_DURATION_S,
   SWEEP_FADE_MS,
   PNR_THRESHOLD_DB,
+  LOW_PNR_OVERRIDE_MIN_DB,
+  LOW_PNR_POST_PRE_MARGIN_DB,
   MIN_SAMPLE_RATE,
   MIN_RECORDING_DURATION_S,
   MAX_RECORDING_DURATION_S,
@@ -194,6 +196,8 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       rejectReason: 'Recording is empty or invalid',
       warning: null,
       decayTruncated: false,
+      canOverrideLowPnr: false,
+      lowConfidence: false,
       pnrDb: 0,
       dynamicRangeDb: 0,
       weakestBandHz: null,
@@ -213,6 +217,8 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       rejectReason: `Sample rate too low (${sampleRate || 0} Hz < ${MIN_SAMPLE_RATE} Hz)`,
       warning: null,
       decayTruncated: false,
+      canOverrideLowPnr: false,
+      lowConfidence: false,
       pnrDb: 0,
       dynamicRangeDb: 0,
       weakestBandHz: null,
@@ -234,6 +240,8 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       rejectReason: `Recording too short (${durationS.toFixed(2)} s < ${minDurationS} s)`,
       warning: null,
       decayTruncated: false,
+      canOverrideLowPnr: false,
+      lowConfidence: false,
       pnrDb: 0,
       dynamicRangeDb: 0,
       weakestBandHz: null,
@@ -251,6 +259,8 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       rejectReason: `Recording too long (${durationS.toFixed(2)} s > ${maxDurationS} s)`,
       warning: null,
       decayTruncated: false,
+      canOverrideLowPnr: false,
+      lowConfidence: false,
       pnrDb: 0,
       dynamicRangeDb: 0,
       weakestBandHz: null,
@@ -277,6 +287,8 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       rejectReason: 'Recording is silent',
       warning: null,
       decayTruncated: false,
+      canOverrideLowPnr: false,
+      lowConfidence: false,
       pnrDb: 0,
       dynamicRangeDb: 0,
       weakestBandHz: null,
@@ -310,35 +322,75 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
   const { peakIdx, peakVal, pnrDb } = findPeakAndPNR(hFull, sampleRate, prePeakMs);
   timingsMs.deconvolveMs = performance.now() - tDeconvStart;
 
+  // Evaluate post-peak direct energy (first 200 ms) against pre-peak noise window
+  const preSamples = Math.round(prePeakMs * 1e-3 * sampleRate);
+  const noiseStart = Math.max(0, peakIdx - Math.round(0.5 * sampleRate));
+  const noiseEnd = Math.max(0, peakIdx - preSamples);
+  const noiseWindow = hFull.subarray(noiseStart, noiseEnd);
+  let rmsNoise = 1e-12;
+  if (noiseWindow.length > 0) {
+    let sumNoise = 0;
+    for (let i = 0; i < noiseWindow.length; i++) sumNoise += noiseWindow[i] ** 2;
+    rmsNoise = Math.sqrt(sumNoise / noiseWindow.length) + 1e-12;
+  }
+
+  const postSamples = Math.round(0.2 * sampleRate);
+  const postEnd = Math.min(hFull.length, peakIdx + postSamples);
+  const postWindow = hFull.subarray(peakIdx, postEnd);
+  let rmsPost = 1e-12;
+  if (postWindow.length > 0) {
+    let sumPost = 0;
+    for (let i = 0; i < postWindow.length; i++) sumPost += postWindow[i] ** 2;
+    rmsPost = Math.sqrt(sumPost / postWindow.length) + 1e-12;
+  }
+
+  const deltaPostPreDb = 20.0 * Math.log10(rmsPost / rmsNoise);
+
+  const roundedPnrDb = Math.round(pnrDb * 10) / 10;
   const pnrThreshold = options.pnrThresholdDb || PNR_THRESHOLD_DB;
-  if (peakVal <= 1e-12 || pnrDb < pnrThreshold) {
-    return {
-      ok: false,
-      rejectReason: 'No sweep detected — make sure the source played during recording',
-      warning: null,
-      decayTruncated: false,
-      pnrDb: Math.round(pnrDb * 10) / 10,
-      dynamicRangeDb: 0,
-      weakestBandHz: null,
-      clipped,
-      irPlot: null,
-      edcPlot: null,
-      bands: null,
-      timingsMs: {
-        ...timingsMs,
-        totalMs: performance.now() - startTime,
-      },
-    };
+  const lowPnrFloor = options.lowPnrOverrideMinDb ?? LOW_PNR_OVERRIDE_MIN_DB;
+  const lowPnrMargin = options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB;
+
+  const canOverrideLowPnr = (peakVal > 1e-12) &&
+    (roundedPnrDb >= lowPnrFloor) &&
+    (roundedPnrDb < pnrThreshold) &&
+    (deltaPostPreDb >= lowPnrMargin);
+
+  let lowConfidence = false;
+  let warning = null;
+
+  if (peakVal <= 1e-12 || roundedPnrDb < pnrThreshold) {
+    const allowLowPnr = Boolean(options.allowLowPnr);
+    // If allowLowPnr is passed and signal exceeds floor, proceed with lowConfidence
+    if (allowLowPnr && peakVal > 1e-12 && roundedPnrDb >= lowPnrFloor) {
+      lowConfidence = true;
+      warning = 'Low signal-to-noise ratio: results have reduced precision';
+    } else {
+      return {
+        ok: false,
+        rejectReason: 'No sweep detected — make sure the source played during recording',
+        warning: null,
+        decayTruncated: false,
+        canOverrideLowPnr,
+        lowConfidence: false,
+        pnrDb: roundedPnrDb,
+        dynamicRangeDb: 0,
+        weakestBandHz: null,
+        clipped,
+        irPlot: null,
+        edcPlot: null,
+        bands: null,
+        timingsMs: {
+          ...timingsMs,
+          totalMs: performance.now() - startTime,
+        },
+      };
+    }
   }
 
   // 5. Cut-Off Decay Check
   // Verify that the signal envelope at the end of the recording has decayed to
   // within about 6 dB of the pre-peak noise floor.
-  const preSamples = Math.round(prePeakMs * 1e-3 * sampleRate);
-  const noiseStart = Math.max(0, peakIdx - Math.round(0.5 * sampleRate));
-  const noiseEnd = Math.max(0, peakIdx - preSamples);
-  const noiseWindow = hFull.subarray(noiseStart, noiseEnd);
-
   // Measure signal envelope at the end of the recording (last 50 ms)
   const windowLen = Math.max(10, Math.round(0.05 * sampleRate));
   const endSamples = signal.subarray(signal.length - windowLen);
@@ -368,10 +420,10 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
   );
 
   let decayTruncated = false;
-  let warning = null;
   if (endEnvelopeRms > 1e-5 && tailAboveNoiseDb > marginDb) {
     decayTruncated = true;
-    warning = 'Reverberation decay appears cut off before reaching the noise floor';
+    const decayMsg = 'Reverberation decay appears cut off before reaching the noise floor';
+    warning = warning ? `${warning}; ${decayMsg}` : decayMsg;
   }
 
   // 6. Extract Impulse Response
@@ -404,8 +456,8 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
     let tier = res.tier;
     let valid = res.valid;
 
-    // Cut-off decay penalty: cap tier at "approximate" at best
-    if (decayTruncated) {
+    // Cut-off decay or low-confidence penalty: cap tier at "approximate" at best
+    if (decayTruncated || lowConfidence) {
       if (tier === 'valid') {
         tier = 'approximate';
         valid = true;
@@ -417,7 +469,7 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       : res.rt60;
 
     const bandDr = Math.round(res.dynamicRangeDb * 10) / 10;
-    drList.append ? drList.append({ dr: bandDr, fc }) : drList.push({ dr: bandDr, fc });
+    drList.push({ dr: bandDr, fc });
 
     bands[fc] = {
       t20: res.t20,
@@ -459,6 +511,8 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
     rejectReason: null,
     warning,
     decayTruncated,
+    canOverrideLowPnr,
+    lowConfidence,
     pnrDb: Math.round(pnrDb * 10) / 10,
     dynamicRangeDb: minDr,
     weakestBandHz,

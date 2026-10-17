@@ -41,6 +41,11 @@ import {
   HEATMAP_UNRELIABLE_MESSAGE,
 } from './heatmap-math.js';
 import { renderHeatmapLegendCanvas } from './heatmap.js';
+import { loadAudioFile } from '../audio/wav.js';
+import { downloadSweepWav } from '../audio/sweep-wav.js';
+import { runSelfTest } from '../analysis/selftest.js';
+import { runAnalysis } from '../analysis/run.js';
+import { formatDecibels } from './format.js';
 
 export async function initApp() {
   const canvas = document.getElementById('floorplan-canvas');
@@ -112,10 +117,46 @@ export async function initApp() {
   const btnCloseSessionsModal = document.getElementById('btn-close-sessions-modal');
   const btnModalDismiss = document.getElementById('btn-modal-dismiss');
 
+  // DOM Elements - Phase 3a Analysis & Simulation Card
+  const btnDownloadSweep = document.getElementById('btn-download-sweep');
+  const inputAudioFile = document.getElementById('input-audio-file');
+  const selectedFileNameEl = document.getElementById('selected-file-name');
+  const sliderSelftestRt60 = document.getElementById('slider-selftest-rt60');
+  const selftestRtVal = document.getElementById('selftest-rt-val');
+  const btnRunSelftest = document.getElementById('btn-run-selftest');
+  const analyzeProgressContainer = document.getElementById('analyze-progress-container');
+  const analyzeProgressBar = document.getElementById('analyze-progress-bar');
+  const analyzeProgressMessage = document.getElementById('analyze-progress-message');
+  const analyzeExecutionMode = document.getElementById('analyze-execution-mode');
+  const analyzeRejectCard = document.getElementById('analyze-reject-card');
+  const analyzeRejectReason = document.getElementById('analyze-reject-reason');
+  const analyzeRejectAdvice = document.getElementById('analyze-reject-advice');
+  const analyzeOverrideRow = document.getElementById('analyze-override-row');
+  const btnOverrideLowPnr = document.getElementById('btn-override-low-pnr');
+  const analyzeResultsContainer = document.getElementById('analyze-results-container');
+  const badgeSimulated = document.getElementById('badge-simulated');
+  const badgeClipped = document.getElementById('badge-clipped');
+  const badgeTruncated = document.getElementById('badge-truncated');
+  const badgeLowConfidence = document.getElementById('badge-low-confidence');
+  const analyzeAudioInfo = document.getElementById('analyze-audio-info');
+  const valPnr = document.getElementById('val-pnr');
+  const valDr = document.getElementById('val-dr');
+  const canvasIrPlot = document.getElementById('canvas-ir-plot');
+  const canvasEdcPlot = document.getElementById('canvas-edc-plot');
+  const analyzeBandsTbody = document.getElementById('analyze-bands-tbody');
+  const selectAttachPoint = document.getElementById('select-attach-point');
+  const btnAttachToPoint = document.getElementById('btn-attach-to-point');
+  const attachSuccessMsg = document.getElementById('attach-success-msg');
+
   let currentUnit = 'metres'; // 'metres' | 'steps'
   let isAspectLockedToDimensions = false;
   let currentMode = 'measure'; // 'measure' | 'source' | 'heatmap'
   let heatmapRangeMode = 'auto'; // 'auto' | 'fixed'
+
+  // Analysis State
+  let currentAnalysisResult = null;
+  let currentAudioContext = null;
+  let lastLoadedAudio = null;
 
   // -------------------------------------------------------------
   // Helpers
@@ -432,8 +473,8 @@ export async function initApp() {
       heatmapUnreliableBanner.hidden = isReliable || usablePoints.length === 0;
     }
 
-    // DEV DATA banner
-    const hasFake = usablePoints.some((p) => p.fake === true);
+    // DEV / SIMULATED DATA banner
+    const hasFake = usablePoints.some((p) => p.fake === true || p.simulated === true || p.source === 'selftest' || p.source === 'dev');
     if (heatmapDevBanner) {
       heatmapDevBanner.hidden = !hasFake;
     }
@@ -476,7 +517,7 @@ export async function initApp() {
               <span class="marker-detail-label">Metric Used</span>
               <span class="marker-detail-val">${bandInfo.metric || 'none'}</span>
             </div>
-            ${m.fake ? '<div class="marker-detail-item"><span class="marker-detail-label">Source</span><span class="marker-detail-val" style="color: #ea580c; font-weight:700;">Simulated [DEV]</span></div>' : ''}
+            ${m.fake || m.simulated ? `<div class="marker-detail-item"><span class="marker-detail-label">Source</span><span class="marker-detail-val" style="color: #ea580c; font-weight:700;">${m.source === 'selftest' ? 'SIMULATED' : 'Simulated [DEV]'}</span></div>` : (m.source ? `<div class="marker-detail-item"><span class="marker-detail-label">Source</span><span class="marker-detail-val">${m.source}${m.originalSampleRate ? ' (' + m.originalSampleRate + ' Hz)' : ''}</span></div>` : '')}
           `;
           markerDetailCard.hidden = false;
         } else {
@@ -600,7 +641,12 @@ export async function initApp() {
         }
       }
 
-      const devBadgeHtml = m.fake ? '<span class="badge badge-dev">DEV</span>' : '';
+      let badgeHtml = '';
+      if (m.fake || m.simulated) {
+        badgeHtml = `<span class="badge ${m.source === 'selftest' ? 'badge-simulated' : 'badge-dev'}">${m.source === 'selftest' ? 'SIMULATED' : 'DEV'}</span>`;
+      } else if (m.lowConfidence) {
+        badgeHtml = '<span class="badge badge-warning">Low Conf</span>';
+      }
 
       // Metric position label if dimensions exist
       let posText = `Pos: (${m.x.toFixed(2)}, ${m.y.toFixed(2)})`;
@@ -611,17 +657,23 @@ export async function initApp() {
         posText = `Pos: ${approxTilde}${xM}m, ${approxTilde}${yM}m (${m.x.toFixed(2)}, ${m.y.toFixed(2)})`;
       }
 
+      let sourceTag = '';
+      if (m.status !== 'pending' && m.source) {
+        sourceTag = `<span class="coord-label">Source: ${m.source}${m.originalSampleRate ? ' (' + m.originalSampleRate + ' Hz)' : ''}${m.fileName ? ' · ' + m.fileName : ''}</span>`;
+      }
+
       item.innerHTML = `
         <div class="card-main">
           <div class="card-header">
             <span class="point-number">Point ${m.id}</span>
             <div class="badge-group">
-              ${devBadgeHtml}
+              ${badgeHtml}
               ${tierBadgeHtml}
             </div>
           </div>
           <div class="card-details">
             <span class="coord-label">${posText}</span>
+            ${sourceTag}
             <span class="rt60-label">RT60 (${activeBand} Hz): <strong>${rt60Text}</strong></span>
           </div>
         </div>
@@ -821,6 +873,488 @@ export async function initApp() {
   }
 
   // -------------------------------------------------------------
+  // Phase 3a: Audio Recording Analysis & Simulation View
+  // -------------------------------------------------------------
+
+  function prepareCanvas(cvs) {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = cvs.getBoundingClientRect();
+    const w = Math.round(rect.width) || 400;
+    const h = Math.round(rect.height) || 140;
+    if (cvs.width !== Math.round(w * dpr) || cvs.height !== Math.round(h * dpr)) {
+      cvs.width = Math.round(w * dpr);
+      cvs.height = Math.round(h * dpr);
+    }
+    const ctx = cvs.getContext('2d');
+    ctx.resetTransform?.();
+    ctx.scale(dpr, dpr);
+    return { ctx, width: w, height: h };
+  }
+
+  function drawIrPlot(cvs, irPlot) {
+    if (!cvs) return;
+    const { ctx, width, height } = prepareCanvas(cvs);
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+
+    if (!irPlot || !irPlot.values || irPlot.values.length === 0) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('No impulse response data', width / 2, height / 2);
+      return;
+    }
+
+    const vals = irPlot.values;
+    let maxAbs = 0;
+    for (let i = 0; i < vals.length; i++) {
+      const a = Math.abs(vals[i]);
+      if (a > maxAbs) maxAbs = a;
+    }
+    if (maxAbs === 0) maxAbs = 1;
+
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+
+    const n = vals.length;
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * width;
+      const y = height / 2 - (vals[i] / maxAbs) * (height * 0.45);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  const BAND_COLORS = {
+    125: '#f43f5e',
+    250: '#f97316',
+    500: '#eab308',
+    1000: '#22c55e',
+    2000: '#06b6d4',
+    4000: '#a855f7',
+  };
+
+  function drawEdcPlot(cvs, edcPlot) {
+    if (!cvs) return;
+    const { ctx, width, height } = prepareCanvas(cvs);
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, width, height);
+
+    const padL = 34;
+    const padR = 10;
+    const padT = 12;
+    const padB = 22;
+    const plotW = Math.max(10, width - padL - padR);
+    const plotH = Math.max(10, height - padT - padB);
+
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#94a3b8';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+
+    const dbs = [0, -20, -40, -60];
+    for (const db of dbs) {
+      const y = padT + (-db / 60) * plotH;
+      ctx.strokeStyle = db === 0 ? 'rgba(148, 163, 184, 0.4)' : 'rgba(148, 163, 184, 0.15)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(padL + plotW, y);
+      ctx.stroke();
+      ctx.fillText(`${db}dB`, padL - 4, y);
+    }
+
+    if (!edcPlot) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('No decay data', width / 2, height / 2);
+      return;
+    }
+
+    let maxT = 0;
+    for (const band of OCTAVE_BANDS) {
+      const curve = edcPlot[band];
+      if (curve && curve.t && curve.t.length > 0) {
+        const lastT = curve.t[curve.t.length - 1];
+        if (lastT > maxT) maxT = lastT;
+      }
+    }
+    if (maxT <= 0) maxT = 1;
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('0s', padL, padT + plotH + 4);
+    ctx.fillText(`${maxT.toFixed(1)}s`, padL + plotW, padT + plotH + 4);
+
+    for (const band of OCTAVE_BANDS) {
+      const curve = edcPlot[band];
+      if (!curve || !curve.t || !curve.edcDb || curve.t.length === 0) continue;
+
+      const color = BAND_COLORS[band] || '#38bdf8';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+
+      const n = curve.t.length;
+      for (let i = 0; i < n; i++) {
+        const tVal = curve.t[i];
+        const dbVal = Math.max(-60, Math.min(0, curve.edcDb[i]));
+        const x = padL + (tVal / maxT) * plotW;
+        const y = padT + (-dbVal / 60) * plotH;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  function getRejectionAdvice(reason) {
+    const r = (reason || '').toLowerCase();
+    if (r.includes('too short')) {
+      return 'Recording must contain the complete 5-second sweep plus at least 3 seconds of natural decay (record at least 15 s recommended). Please record a longer take.';
+    }
+    if (r.includes('sample rate')) {
+      return 'The audio sample rate is too low. EchoMap requires at least 22,050 Hz to analyze acoustic octave bands accurately.';
+    }
+    if (r.includes('empty') || r.includes('silent')) {
+      return 'The audio appears silent or empty. Check that your microphone was unmuted and recording level was adequate.';
+    }
+    if (r.includes('sweep not detected') || r.includes('pnr')) {
+      return 'The test sweep could not be detected above background noise. Ensure playback volume is adequate, place the speaker at a fixed position, and turn off background noise sources.';
+    }
+    return 'Please verify that the audio file was recorded cleanly with the test sweep playing, and try again.';
+  }
+
+  function setAnalyzeProgress(stageOrObj, progress, message) {
+    let stage = stageOrObj;
+    let p = progress;
+    let msg = message;
+    if (typeof stageOrObj === 'object' && stageOrObj !== null) {
+      stage = stageOrObj.stage;
+      p = stageOrObj.progress;
+      msg = stageOrObj.message;
+    }
+    if (analyzeProgressContainer) analyzeProgressContainer.hidden = false;
+    if (analyzeProgressBar) {
+      const pct = Math.round((Number(p) || 0) * 100);
+      analyzeProgressBar.style.width = `${pct}%`;
+    }
+    if (analyzeProgressMessage) {
+      analyzeProgressMessage.textContent = msg || `Processing: ${stage || ''}`;
+    }
+  }
+
+  function populateAttachPointSelect() {
+    if (!selectAttachPoint) return;
+    const previousVal = selectAttachPoint.value;
+    selectAttachPoint.innerHTML = '';
+
+    const newOpt = document.createElement('option');
+    newOpt.value = 'new';
+    newOpt.textContent = '+ Add as new measurement point';
+    selectAttachPoint.appendChild(newOpt);
+
+    let hasSelected = false;
+    for (const m of model.measurements) {
+      const opt = document.createElement('option');
+      opt.value = String(m.id);
+      const statusTag = m.status === 'pending' ? '[Pending]' : `[Measured: ${m.source || 'wav'}]`;
+      opt.textContent = `Point #${m.id} (${m.x.toFixed(2)}, ${m.y.toFixed(2)}) ${statusTag}`;
+
+      if (previousVal && String(m.id) === previousVal) {
+        opt.selected = true;
+        hasSelected = true;
+      } else if (!hasSelected && (m.id === model.selectedPointId || m.status === 'pending')) {
+        opt.selected = true;
+        hasSelected = true;
+      }
+      selectAttachPoint.appendChild(opt);
+    }
+    if (!hasSelected) {
+      newOpt.selected = true;
+    }
+  }
+
+  function displayAnalysisResults(result, audioMeta = {}) {
+    currentAnalysisResult = result;
+    if (analyzeProgressContainer) analyzeProgressContainer.hidden = true;
+
+    if (!result.ok) {
+      if (analyzeRejectCard) analyzeRejectCard.hidden = false;
+      if (analyzeRejectReason) analyzeRejectReason.textContent = result.rejectReason || 'Analysis failed';
+      if (analyzeRejectAdvice) analyzeRejectAdvice.textContent = getRejectionAdvice(result.rejectReason);
+      if (analyzeOverrideRow) {
+        analyzeOverrideRow.hidden = !result.canOverrideLowPnr;
+      }
+      if (analyzeResultsContainer) analyzeResultsContainer.hidden = true;
+      return;
+    }
+
+    if (analyzeRejectCard) analyzeRejectCard.hidden = true;
+    if (analyzeResultsContainer) analyzeResultsContainer.hidden = false;
+
+    // Badges
+    if (badgeSimulated) badgeSimulated.hidden = !result.simulated;
+    if (badgeClipped) badgeClipped.hidden = !result.clipped;
+    if (badgeTruncated) badgeTruncated.hidden = !result.decayTruncated;
+    if (badgeLowConfidence) badgeLowConfidence.hidden = !result.lowConfidence;
+
+    // Execution mode
+    if (analyzeExecutionMode) {
+      analyzeExecutionMode.textContent = `analysed in: ${result.executionMode === 'worker' ? 'worker' : 'main thread'}`;
+    }
+
+    // Audio metadata info text
+    if (analyzeAudioInfo) {
+      const sr = audioMeta.sampleRate || result.sampleRate;
+      const dur = audioMeta.durationS || (audioMeta.samples ? audioMeta.samples.length / sr : null);
+      const parts = [];
+      if (sr) parts.push(`${sr} Hz`);
+      if (dur) parts.push(`${dur.toFixed(1)} s`);
+      if (audioMeta.isMultiChannel) parts.push('Ch 0 (mono extracted)');
+      if (audioMeta.isCompressed) parts.push('Compressed audio');
+      if (result.simulated && result.targetRt60) parts.push(`Target RT60: ${result.targetRt60.toFixed(2)} s`);
+      analyzeAudioInfo.textContent = parts.join(' · ');
+    }
+
+    // KPIs: Sweep detection (PNR) & Usable decay depth (DR)
+    if (valPnr) valPnr.textContent = formatDecibels(result.pnrDb, 1);
+    if (valDr) {
+      const drStr = formatDecibels(result.dynamicRangeDb, 1);
+      valDr.textContent = result.weakestBandHz ? `${drStr} (${result.weakestBandHz} Hz)` : drStr;
+    }
+
+    // Render Canvas Plots
+    drawIrPlot(canvasIrPlot, result.irPlot);
+    drawEdcPlot(canvasEdcPlot, result.edcPlot);
+
+    // Populate Octave Bands Results Table
+    if (analyzeBandsTbody) {
+      analyzeBandsTbody.innerHTML = '';
+      for (const fc of OCTAVE_BANDS) {
+        const b = result.bands ? result.bands[fc] : null;
+        const tr = document.createElement('tr');
+        if (!b) {
+          tr.innerHTML = `<td><strong>${fc} Hz</strong></td><td colspan="6">—</td>`;
+        } else {
+          const tierBadge = `<span class="badge tier-${b.tier}">${b.tier}</span>`;
+          const t20Str = Number.isFinite(b.t20) ? b.t20.toFixed(3) : '—';
+          const t30Str = Number.isFinite(b.t30) ? b.t30.toFixed(3) : '—';
+          const edtStr = Number.isFinite(b.edt) ? b.edt.toFixed(3) : '—';
+          const r2Str = Number.isFinite(b.r2) ? b.r2.toFixed(3) : '—';
+          const usedStr = b.used || 'none';
+          tr.innerHTML = `
+            <td><strong>${fc} Hz</strong></td>
+            <td>${t20Str}</td>
+            <td>${t30Str}</td>
+            <td>${edtStr}</td>
+            <td>${r2Str}</td>
+            <td>${usedStr}</td>
+            <td>${tierBadge}</td>
+          `;
+        }
+        analyzeBandsTbody.appendChild(tr);
+      }
+    }
+
+    populateAttachPointSelect();
+  }
+
+  // 1. Download Test Sweep
+  if (btnDownloadSweep) {
+    btnDownloadSweep.addEventListener('click', () => {
+      downloadSweepWav();
+    });
+  }
+
+  // 2. Room Simulation Self-Test Controls
+  if (sliderSelftestRt60 && selftestRtVal) {
+    sliderSelftestRt60.addEventListener('input', (e) => {
+      selftestRtVal.textContent = `${Number(e.target.value).toFixed(1)} s`;
+    });
+  }
+
+  if (btnRunSelftest) {
+    btnRunSelftest.addEventListener('click', async () => {
+      const rtTarget = sliderSelftestRt60 ? Number(sliderSelftestRt60.value) : 0.8;
+      if (analyzeRejectCard) analyzeRejectCard.hidden = true;
+      if (analyzeResultsContainer) analyzeResultsContainer.hidden = true;
+      setAnalyzeProgress('simulation', 0.05, `Simulating room impulse response (target RT60 = ${rtTarget.toFixed(1)} s)...`);
+
+      try {
+        const result = await runSelfTest({
+          rtTarget,
+          onProgress: (info) => setAnalyzeProgress(info),
+        });
+
+        lastLoadedAudio = {
+          samples: null,
+          sampleRate: 48000,
+          fileName: `simulated_room_rt${rtTarget.toFixed(1)}s.wav`,
+          isMultiChannel: false,
+          isCompressed: false,
+        };
+
+        displayAnalysisResults(result, {
+          sampleRate: 48000,
+          durationS: 9.0,
+          fileName: `simulated_room_rt${rtTarget.toFixed(1)}s.wav`,
+          isMultiChannel: false,
+          isCompressed: false,
+        });
+      } catch (err) {
+        console.error('[SelfTestError]', err);
+        if (analyzeProgressContainer) analyzeProgressContainer.hidden = true;
+        if (analyzeRejectCard) {
+          analyzeRejectCard.hidden = false;
+          if (analyzeRejectReason) analyzeRejectReason.textContent = err.message || 'Simulation failed';
+          if (analyzeRejectAdvice) analyzeRejectAdvice.textContent = 'Check browser console for error details.';
+          if (analyzeOverrideRow) analyzeOverrideRow.hidden = true;
+        }
+      }
+    });
+  }
+
+  // 3. Audio File Picker & Analysis
+  if (inputAudioFile) {
+    inputAudioFile.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      if (selectedFileNameEl) selectedFileNameEl.textContent = `${file.name} (${(file.size / 1024).toFixed(0)} KB)`;
+      if (analyzeRejectCard) analyzeRejectCard.hidden = true;
+      if (analyzeResultsContainer) analyzeResultsContainer.hidden = true;
+      setAnalyzeProgress('loading', 0.05, 'Reading audio file...');
+
+      try {
+        if (!currentAudioContext && typeof AudioContext !== 'undefined') {
+          currentAudioContext = new AudioContext();
+        }
+
+        const loaded = await loadAudioFile(file, currentAudioContext);
+        lastLoadedAudio = {
+          samples: loaded.samples,
+          sampleRate: loaded.sampleRate,
+          fileName: file.name,
+          isMultiChannel: loaded.isMultiChannel,
+          isCompressed: loaded.isCompressed,
+        };
+
+        if (loaded.warning) {
+          console.warn('[AudioLoader]', loaded.warning);
+        }
+
+        setAnalyzeProgress('analysis', 0.1, 'Running acoustic deconvolution...');
+
+        const result = await runAnalysis(
+          loaded.samples,
+          loaded.sampleRate,
+          (info) => setAnalyzeProgress(info)
+        );
+
+        displayAnalysisResults(result, {
+          sampleRate: loaded.sampleRate,
+          samples: loaded.samples,
+          fileName: file.name,
+          isMultiChannel: loaded.isMultiChannel,
+          isCompressed: loaded.isCompressed,
+        });
+      } catch (err) {
+        console.error('[AudioAnalysisError]', err);
+        if (analyzeProgressContainer) analyzeProgressContainer.hidden = true;
+        if (analyzeRejectCard) {
+          analyzeRejectCard.hidden = false;
+          if (analyzeRejectReason) analyzeRejectReason.textContent = err.message || 'Failed to read audio file';
+          if (analyzeRejectAdvice) analyzeRejectAdvice.textContent = 'Please ensure the file is an uncorrupted WAV, MP3, or M4A audio file.';
+          if (analyzeOverrideRow) analyzeOverrideRow.hidden = true;
+        }
+      }
+    });
+  }
+
+  // 4. Low PNR Override Handler
+  if (btnOverrideLowPnr) {
+    btnOverrideLowPnr.addEventListener('click', async () => {
+      if (!lastLoadedAudio || !lastLoadedAudio.samples) return;
+      setAnalyzeProgress('analysis', 0.1, 'Re-analyzing with low-confidence override...');
+      try {
+        const result = await runAnalysis(
+          lastLoadedAudio.samples,
+          lastLoadedAudio.sampleRate,
+          (info) => setAnalyzeProgress(info),
+          { allowLowPnr: true }
+        );
+
+        displayAnalysisResults(result, {
+          sampleRate: lastLoadedAudio.sampleRate,
+          samples: lastLoadedAudio.samples,
+          fileName: lastLoadedAudio.fileName,
+          isMultiChannel: lastLoadedAudio.isMultiChannel,
+          isCompressed: lastLoadedAudio.isCompressed,
+        });
+      } catch (err) {
+        console.error('[OverrideError]', err);
+      }
+    });
+  }
+
+  // 5. Attach Result to Floor Plan Point
+  if (btnAttachToPoint) {
+    btnAttachToPoint.addEventListener('click', () => {
+      if (!currentAnalysisResult || !currentAnalysisResult.ok) {
+        alert('No valid analysis result to attach.');
+        return;
+      }
+
+      const pointChoice = selectAttachPoint ? selectAttachPoint.value : 'new';
+      const pointId = pointChoice === 'new' ? null : Number(pointChoice);
+
+      const measurementData = {
+        ...currentAnalysisResult,
+        fake: Boolean(currentAnalysisResult.fake || currentAnalysisResult.simulated),
+        source: currentAnalysisResult.source || (currentAnalysisResult.simulated ? 'selftest' : 'wav'),
+        fileName: lastLoadedAudio ? lastLoadedAudio.fileName : (currentAnalysisResult.simulated ? 'simulated_room.wav' : null),
+        originalSampleRate: lastLoadedAudio ? lastLoadedAudio.sampleRate : (currentAnalysisResult.sampleRate || 48000),
+        timestamp: Date.now(),
+      };
+
+      let pt;
+      if (pointChoice === 'new') {
+        pt = model.addMeasuredMeasurement(0.5, 0.5, measurementData);
+      } else {
+        pt = model.attachMeasurement(pointId, measurementData);
+      }
+
+      if (attachSuccessMsg) {
+        attachSuccessMsg.hidden = false;
+        attachSuccessMsg.textContent = `✓ Attached to Point #${pt.id}!`;
+        setTimeout(() => {
+          if (attachSuccessMsg) attachSuccessMsg.hidden = true;
+        }, 3000);
+      }
+
+      populateAttachPointSelect();
+    });
+  }
+
+  // -------------------------------------------------------------
   // Subscribe to Model Updates
   // -------------------------------------------------------------
   model.subscribe(({ type }) => {
@@ -831,16 +1365,19 @@ export async function initApp() {
     } else if (type === 'point_selected') {
       updateHeatmapUI();
       renderMeasurementList();
+      populateAttachPointSelect();
     } else if (type === 'session_loaded') {
       updateFakeWarningUI();
       updateBandSelectorUI(model.activeBand);
       updateHeatmapUI();
       renderMeasurementList();
+      populateAttachPointSelect();
     } else {
       updateFakeWarningUI();
       updateBandSelectorUI(model.activeBand);
       updateHeatmapUI();
       renderMeasurementList();
+      populateAttachPointSelect();
       scheduleAutoSave();
     }
   });
@@ -848,6 +1385,10 @@ export async function initApp() {
   window.addEventListener('resize', () => {
     if (currentMode === 'heatmap') {
       updateHeatmapUI();
+    }
+    if (currentAnalysisResult && currentAnalysisResult.ok) {
+      drawIrPlot(canvasIrPlot, currentAnalysisResult.irPlot);
+      drawEdcPlot(canvasEdcPlot, currentAnalysisResult.edcPlot);
     }
   });
 
@@ -885,6 +1426,9 @@ export async function initApp() {
   updateBandSelectorUI(model.activeBand);
   updateModeButtons('measure');
   renderMeasurementList();
+  populateAttachPointSelect();
+  drawIrPlot(canvasIrPlot, null);
+  drawEdcPlot(canvasEdcPlot, null);
   updateFakeWarningUI();
   updateHeatmapUI();
 }

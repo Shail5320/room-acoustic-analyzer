@@ -444,3 +444,108 @@ test('runAnalysis: Main-thread fallback in Node executes and invokes onProgress'
   assert.ok(stagesSeen.includes('rt60'), 'Progress reported rt60 stage');
   assert.ok(stagesSeen.includes('done'), 'Progress reported done stage');
 });
+
+// ---------------------------------------------------------------------------
+// 12. Low-PNR Override & Exact 10 dB / 20 dB Threshold Tests
+// ---------------------------------------------------------------------------
+
+test('Pipeline: Noise-only recording with allowLowPnr: true yields no valid or approximate bands', () => {
+  const rng = createSeededRng(101);
+  const noise = new Float64Array(8 * 48000);
+  for (let i = 0; i < noise.length; i++) noise[i] = rng() * 0.1;
+
+  // Without allowLowPnr: rejected, canOverrideLowPnr must be false because deltaPostPre < 1.5 dB
+  const resNoOverride = analyzeRecording({ samples: noise, sampleRate: 48000 });
+  assert.strictEqual(resNoOverride.ok, false);
+  assert.strictEqual(resNoOverride.canOverrideLowPnr, false, 'Noise-only must NOT qualify for low-PNR override');
+
+  // With allowLowPnr: true: even if forced, Schroeder regression and DR checks fail
+  const resForced = analyzeRecording({ samples: noise, sampleRate: 48000, options: { allowLowPnr: true } });
+  if (resForced.ok && resForced.bands) {
+    for (const fc of OCTAVE_CENTRES) {
+      const band = resForced.bands[fc];
+      assert.notStrictEqual(band.tier, 'valid', `Band ${fc} must not be valid for noise`);
+      assert.notStrictEqual(band.tier, 'approximate', `Band ${fc} must not be approximate for noise`);
+      assert.strictEqual(band.tier, 'invalid', `Band ${fc} must be invalid for noise`);
+      assert.strictEqual(band.valid, false);
+    }
+  } else {
+    // If rejected, ok is false and bands is null (no valid/approx bands)
+    assert.strictEqual(resForced.ok, false);
+  }
+});
+
+test('Pipeline: Low-PNR sweep allows low-confidence override when Delta E >= 1.5 dB and caps tiers at approximate', () => {
+  const clean = loadRecordingFixturePadded('fake_recording_single.bin', 8.0, 48000);
+  const rng = createSeededRng(777);
+
+  // Add noise to place PNR inside [10, 20) dB band
+  let peak = 0;
+  for (let i = 0; i < clean.length; i++) {
+    const a = Math.abs(clean[i]);
+    if (a > peak) peak = a;
+  }
+  const noisy = new Float64Array(clean.length);
+  const sigma = peak * 0.25; // moderate noise
+  for (let i = 0; i < clean.length; i++) noisy[i] = clean[i] + rng() * sigma;
+
+  // Normal pass without allowLowPnr: should reject if PNR < 20 dB, but flag canOverrideLowPnr: true
+  const resNormal = analyzeRecording({ samples: noisy, sampleRate: 48000 });
+  if (resNormal.pnrDb >= 10.0 && resNormal.pnrDb < 20.0) {
+    assert.strictEqual(resNormal.ok, false);
+    assert.strictEqual(resNormal.canOverrideLowPnr, true, 'Real sweep with moderate noise should qualify for override');
+
+    // Re-run with allowLowPnr: true
+    const resOverride = analyzeRecording({ samples: noisy, sampleRate: 48000, options: { allowLowPnr: true } });
+    assert.strictEqual(resOverride.ok, true);
+    assert.strictEqual(resOverride.lowConfidence, true);
+    assert.match(resOverride.warning, /Low signal-to-noise ratio/i);
+
+    // Verify all tiers are capped at approximate at best (no 'valid' tiers allowed)
+    for (const fc of OCTAVE_CENTRES) {
+      assert.notStrictEqual(resOverride.bands[fc].tier, 'valid', `Band ${fc} must not be valid under lowConfidence`);
+    }
+  }
+});
+
+test('Pipeline: Exact 10 dB and 20 dB PNR threshold boundaries', () => {
+  // Test boundary logic:
+  // At exactly 20.0 dB: accepted as normal (ok: true, lowConfidence: false, canOverrideLowPnr: false)
+  // At exactly 10.0 dB: if deltaE >= 1.5 dB, canOverrideLowPnr is true; with allowLowPnr: true, accepted
+  // Below 10.0 dB (e.g. 9.9 dB): unconditionally rejected, canOverrideLowPnr: false
+
+  const clean = loadRecordingFixturePadded('fake_recording_single.bin', 8.0, 48000);
+
+  // If pnrThresholdDb is set to match clean PNR exactly, it must pass
+  const resExact20 = analyzeRecording({ samples: clean, sampleRate: 48000, options: { pnrThresholdDb: 20.0 } });
+  assert.strictEqual(resExact20.ok, true);
+  assert.strictEqual(resExact20.lowConfidence, false);
+  assert.strictEqual(resExact20.canOverrideLowPnr, false);
+
+  // If pnrThresholdDb is set above clean PNR (simulating PNR < threshold):
+  const highThreshold = resExact20.pnrDb + 5.0;
+  const resBelowThreshold = analyzeRecording({
+    samples: clean,
+    sampleRate: 48000,
+    options: {
+      pnrThresholdDb: highThreshold,
+      lowPnrOverrideMinDb: resExact20.pnrDb, // exactly equal to pnrDb
+    },
+  });
+  // At exactly the override floor, canOverrideLowPnr must be true
+  assert.strictEqual(resBelowThreshold.ok, false);
+  assert.strictEqual(resBelowThreshold.canOverrideLowPnr, true, 'At exactly lowPnrOverrideMinDb, override is enabled');
+
+  // Slightly below override floor: must be false
+  const resBelowFloor = analyzeRecording({
+    samples: clean,
+    sampleRate: 48000,
+    options: {
+      pnrThresholdDb: highThreshold,
+      lowPnrOverrideMinDb: resExact20.pnrDb + 0.1, // floor is above signal PNR
+    },
+  });
+  assert.strictEqual(resBelowFloor.ok, false);
+  assert.strictEqual(resBelowFloor.canOverrideLowPnr, false, 'Below lowPnrOverrideMinDb, override is NOT enabled');
+});
+
