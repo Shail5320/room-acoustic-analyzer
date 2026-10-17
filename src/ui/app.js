@@ -13,7 +13,12 @@
 
 import { SessionModel, OCTAVE_BANDS } from './session-model.js';
 import { FloorPlanView } from './floorplan.js';
-import { ASPECT_RATIO_PRESETS } from './coordinates.js';
+import {
+  ASPECT_RATIO_PRESETS,
+  DEFAULT_ASPECT_RATIO,
+  parseAspectRatio,
+  formatAspectRatio,
+} from './coordinates.js';
 import {
   parseAndValidateDimensions,
   deriveAspectRatio,
@@ -26,6 +31,16 @@ import {
   hasFakeMeasurements,
   downloadFile,
 } from '../store/export.js';
+import {
+  getBandTierCounts,
+  formatBandTierCounts,
+  computeHeatmapRange,
+  getUsablePoints,
+  extractPointBandValue,
+  MIN_USABLE_HEATMAP_POINTS,
+  HEATMAP_UNRELIABLE_MESSAGE,
+} from './heatmap-math.js';
+import { renderHeatmapLegendCanvas } from './heatmap.js';
 
 export async function initApp() {
   const canvas = document.getElementById('floorplan-canvas');
@@ -65,16 +80,30 @@ export async function initApp() {
   const btnApplyDimensions = document.getElementById('btn-apply-dimensions');
   const btnClearDimensions = document.getElementById('btn-clear-dimensions');
 
-  // DOM Elements - Floor Plan Workspace
+  // DOM Elements - Floor Plan & Heatmap Workspace
   const modeMeasureBtn = document.getElementById('btn-mode-measure');
   const modeSourceBtn = document.getElementById('btn-mode-source');
+  const modeHeatmapBtn = document.getElementById('btn-mode-heatmap');
   const aspectRatioSelect = document.getElementById('select-aspect-ratio');
   const devAddFakeBtn = document.getElementById('btn-dev-fake');
   const bandSelectorContainer = document.getElementById('band-selector');
+  const bandTierSummaryEl = document.getElementById('band-tier-summary');
   const measurementListEl = document.getElementById('measurement-list');
   const emptyListNotice = document.getElementById('empty-list-notice');
   const pointCountBadge = document.getElementById('point-count-badge');
   const clearAllBtn = document.getElementById('btn-clear-points');
+
+  // DOM Elements - Heatmap Panel & Legend
+  const heatmapCard = document.getElementById('heatmap-card');
+  const heatmapDevBanner = document.getElementById('heatmap-dev-banner');
+  const heatmapUnreliableBanner = document.getElementById('heatmap-unreliable-banner');
+  const markerDetailCard = document.getElementById('marker-detail-card');
+  const markerDetailTitle = document.getElementById('marker-detail-title');
+  const markerDetailBody = document.getElementById('marker-detail-body');
+  const btnCloseMarkerDetail = document.getElementById('btn-close-marker-detail');
+  const btnRangeAuto = document.getElementById('btn-range-auto');
+  const btnRangeFixed = document.getElementById('btn-range-fixed');
+  const heatmapLegendCanvas = document.getElementById('heatmap-legend-canvas');
 
   // DOM Elements - Sessions Modal
   const modalSessions = document.getElementById('modal-sessions');
@@ -85,6 +114,8 @@ export async function initApp() {
 
   let currentUnit = 'metres'; // 'metres' | 'steps'
   let isAspectLockedToDimensions = false;
+  let currentMode = 'measure'; // 'measure' | 'source' | 'heatmap'
+  let heatmapRangeMode = 'auto'; // 'auto' | 'fixed'
 
   // -------------------------------------------------------------
   // Helpers
@@ -140,26 +171,30 @@ export async function initApp() {
   // -------------------------------------------------------------
   // Aspect Ratio Dropdown Management
   // -------------------------------------------------------------
-  function populateAspectRatioSelect(selectedRatio = '4:3') {
+  function populateAspectRatioSelect(selectedRatio = DEFAULT_ASPECT_RATIO) {
     if (!aspectRatioSelect) return;
     aspectRatioSelect.innerHTML = '';
 
+    const numRatio = parseAspectRatio(selectedRatio);
     let matched = false;
     for (const preset of ASPECT_RATIO_PRESETS) {
       const opt = document.createElement('option');
       opt.value = preset.value;
       opt.textContent = preset.label;
-      if (preset.value === selectedRatio) {
+      if (preset.value === selectedRatio || Math.abs(preset.ratio - numRatio) < 1e-4) {
         opt.selected = true;
         matched = true;
       }
       aspectRatioSelect.appendChild(opt);
     }
 
-    if (!matched && selectedRatio) {
+    if (!matched && numRatio) {
       const customOpt = document.createElement('option');
-      customOpt.value = selectedRatio;
-      customOpt.textContent = `${selectedRatio} (From Dimensions)`;
+      customOpt.value = numRatio;
+      const displayStr = formatAspectRatio(numRatio);
+      customOpt.textContent = model.roomDimensions
+        ? `${displayStr} (From Dimensions)`
+        : `${displayStr}`;
       customOpt.selected = true;
       aspectRatioSelect.appendChild(customOpt);
     }
@@ -289,8 +324,8 @@ export async function initApp() {
       // Derive aspect ratio and update model & select
       const derived = deriveAspectRatio(parsed.dimensions.lengthM, parsed.dimensions.widthM);
       if (derived) {
-        model.setAspectRatio(derived.ratioStr);
-        populateAspectRatioSelect(derived.ratioStr);
+        model.setAspectRatio(derived.ratio);
+        populateAspectRatioSelect(derived.ratio);
       }
 
       syncDimensionsUIFromModel();
@@ -308,33 +343,149 @@ export async function initApp() {
   // Mode Switchers
   // -------------------------------------------------------------
   function updateModeButtons(activeMode) {
-    if (modeMeasureBtn && modeSourceBtn) {
-      if (activeMode === 'measure') {
-        modeMeasureBtn.classList.add('active');
-        modeMeasureBtn.setAttribute('aria-pressed', 'true');
-        modeSourceBtn.classList.remove('active');
-        modeSourceBtn.setAttribute('aria-pressed', 'false');
-      } else {
-        modeSourceBtn.classList.add('active');
-        modeSourceBtn.setAttribute('aria-pressed', 'true');
-        modeMeasureBtn.classList.remove('active');
-        modeMeasureBtn.setAttribute('aria-pressed', 'false');
-      }
+    currentMode = activeMode;
+    const items = [
+      { btn: modeMeasureBtn, mode: 'measure' },
+      { btn: modeSourceBtn, mode: 'source' },
+      { btn: modeHeatmapBtn, mode: 'heatmap' },
+    ];
+    for (const item of items) {
+      if (!item.btn) continue;
+      const isActive = item.mode === activeMode;
+      item.btn.classList.toggle('active', isActive);
+      item.btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    }
+
+    if (heatmapCard) {
+      heatmapCard.hidden = activeMode !== 'heatmap';
+    }
+
+    view.setMode(activeMode);
+    if (activeMode === 'heatmap') {
+      updateHeatmapUI();
     }
   }
 
   if (modeMeasureBtn) {
-    modeMeasureBtn.addEventListener('click', () => {
-      view.setMode('measure');
-      updateModeButtons('measure');
-    });
+    modeMeasureBtn.addEventListener('click', () => updateModeButtons('measure'));
   }
 
   if (modeSourceBtn) {
-    modeSourceBtn.addEventListener('click', () => {
-      view.setMode('source');
-      updateModeButtons('source');
+    modeSourceBtn.addEventListener('click', () => updateModeButtons('source'));
+  }
+
+  if (modeHeatmapBtn) {
+    modeHeatmapBtn.addEventListener('click', () => updateModeButtons('heatmap'));
+  }
+
+  // -------------------------------------------------------------
+  // Heatmap Range Controls & Inspector
+  // -------------------------------------------------------------
+  if (btnRangeAuto) {
+    btnRangeAuto.addEventListener('click', () => {
+      heatmapRangeMode = 'auto';
+      btnRangeAuto.classList.add('active');
+      btnRangeAuto.setAttribute('aria-pressed', 'true');
+      if (btnRangeFixed) {
+        btnRangeFixed.classList.remove('active');
+        btnRangeFixed.setAttribute('aria-pressed', 'false');
+      }
+      view.setHeatmapRangeMode('auto');
+      updateHeatmapUI();
     });
+  }
+
+  if (btnRangeFixed) {
+    btnRangeFixed.addEventListener('click', () => {
+      heatmapRangeMode = 'fixed';
+      btnRangeFixed.classList.add('active');
+      btnRangeFixed.setAttribute('aria-pressed', 'true');
+      if (btnRangeAuto) {
+        btnRangeAuto.classList.remove('active');
+        btnRangeAuto.setAttribute('aria-pressed', 'false');
+      }
+      view.setHeatmapRangeMode('fixed');
+      updateHeatmapUI();
+    });
+  }
+
+  if (btnCloseMarkerDetail) {
+    btnCloseMarkerDetail.addEventListener('click', () => {
+      model.selectPoint(null);
+    });
+  }
+
+  function updateHeatmapUI() {
+    const activeBand = model.activeBand;
+    const usablePoints = getUsablePoints(model.measurements, activeBand);
+    const range = computeHeatmapRange(usablePoints, heatmapRangeMode);
+    const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    // Render legend color bar
+    if (heatmapLegendCanvas) {
+      renderHeatmapLegendCanvas(heatmapLegendCanvas, range, isDark);
+    }
+
+    // Honest messaging: < 4 points shows warning
+    const isReliable = usablePoints.length >= MIN_USABLE_HEATMAP_POINTS;
+    if (heatmapUnreliableBanner) {
+      heatmapUnreliableBanner.hidden = isReliable || usablePoints.length === 0;
+    }
+
+    // DEV DATA banner
+    const hasFake = usablePoints.some((p) => p.fake === true);
+    if (heatmapDevBanner) {
+      heatmapDevBanner.hidden = !hasFake;
+    }
+
+    // Marker detail inspector
+    if (markerDetailCard && markerDetailBody && markerDetailTitle) {
+      if (model.selectedPointId !== null) {
+        const m = model.getMeasurement(model.selectedPointId);
+        if (m) {
+          const bandInfo = extractPointBandValue(m, activeBand);
+          const isPending = m.status === 'pending';
+          markerDetailTitle.textContent = `Point #${m.id} Details (${activeBand} Hz)`;
+
+          let valDisplay = '—';
+          if (!isPending && bandInfo.usable) {
+            valDisplay = `${bandInfo.value.toFixed(3)} s`;
+          } else if (!isPending) {
+            valDisplay = 'Invalid';
+          }
+
+          let tierBadge = `<span class="badge tier-${bandInfo.tier}">${bandInfo.tier}</span>`;
+          if (isPending) {
+            tierBadge = `<span class="badge tier-pending">Pending</span>`;
+          }
+
+          markerDetailBody.innerHTML = `
+            <div class="marker-detail-item">
+              <span class="marker-detail-label">Position (rel)</span>
+              <span class="marker-detail-val">x: ${m.x.toFixed(3)}, y: ${m.y.toFixed(3)}</span>
+            </div>
+            <div class="marker-detail-item">
+              <span class="marker-detail-label">RT60 Value</span>
+              <span class="marker-detail-val">${valDisplay}</span>
+            </div>
+            <div class="marker-detail-item">
+              <span class="marker-detail-label">Validity Tier</span>
+              <span class="marker-detail-val">${tierBadge}</span>
+            </div>
+            <div class="marker-detail-item">
+              <span class="marker-detail-label">Metric Used</span>
+              <span class="marker-detail-val">${bandInfo.metric || 'none'}</span>
+            </div>
+            ${m.fake ? '<div class="marker-detail-item"><span class="marker-detail-label">Source</span><span class="marker-detail-val" style="color: #ea580c; font-weight:700;">Simulated [DEV]</span></div>' : ''}
+          `;
+          markerDetailCard.hidden = false;
+        } else {
+          markerDetailCard.hidden = true;
+        }
+      } else {
+        markerDetailCard.hidden = true;
+      }
+    }
   }
 
   // -------------------------------------------------------------
@@ -354,6 +505,8 @@ export async function initApp() {
     const buttons = bandSelectorContainer.querySelectorAll('button[data-band]');
     buttons.forEach((btn) => {
       const b = Number(btn.getAttribute('data-band'));
+      const counts = getBandTierCounts(model.measurements, b);
+      btn.title = `${b} Hz: ${formatBandTierCounts(counts)}`;
       if (b === activeBand) {
         btn.classList.add('active');
         btn.setAttribute('aria-pressed', 'true');
@@ -362,6 +515,11 @@ export async function initApp() {
         btn.setAttribute('aria-pressed', 'false');
       }
     });
+
+    if (bandTierSummaryEl) {
+      const currentCounts = getBandTierCounts(model.measurements, activeBand);
+      bandTierSummaryEl.textContent = `${activeBand} Hz: ${formatBandTierCounts(currentCounts)}`;
+    }
   }
 
   // -------------------------------------------------------------
@@ -517,7 +675,7 @@ export async function initApp() {
             <div class="session-item-name">${s.name || 'Untitled Session'}${isCurrent ? ' (Current)' : ''}</div>
             <div class="session-item-meta">
               <span>Points: ${s.pointCount}</span>
-              <span>Ratio: ${s.aspectRatio || '4:3'}</span>
+              <span>Ratio: ${formatAspectRatio(s.aspectRatio)}</span>
               <span>${s.hasDimensions ? '📐 Dims' : 'No Dims'}</span>
               <span>Updated: ${updatedDate} ${updatedTime}</span>
             </div>
@@ -668,14 +826,28 @@ export async function initApp() {
   model.subscribe(({ type }) => {
     if (type === 'activeBand') {
       updateBandSelectorUI(model.activeBand);
+      updateHeatmapUI();
+      renderMeasurementList();
+    } else if (type === 'point_selected') {
+      updateHeatmapUI();
       renderMeasurementList();
     } else if (type === 'session_loaded') {
       updateFakeWarningUI();
+      updateBandSelectorUI(model.activeBand);
+      updateHeatmapUI();
       renderMeasurementList();
     } else {
       updateFakeWarningUI();
+      updateBandSelectorUI(model.activeBand);
+      updateHeatmapUI();
       renderMeasurementList();
       scheduleAutoSave();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    if (currentMode === 'heatmap') {
+      updateHeatmapUI();
     }
   });
 
@@ -714,6 +886,7 @@ export async function initApp() {
   updateModeButtons('measure');
   renderMeasurementList();
   updateFakeWarningUI();
+  updateHeatmapUI();
 }
 
 if (document.readyState === 'loading') {

@@ -10,6 +10,12 @@
  *   - Zero dependencies, ES modules.
  */
 
+import {
+  DEFAULT_ASPECT_RATIO,
+  parseAspectRatio,
+  getExactAspectRatio,
+} from '../ui/coordinates.js';
+
 export const DB_NAME = 'echomap-db';
 export const DB_VERSION = 1;
 export const STORE_NAME = 'sessions';
@@ -48,15 +54,26 @@ export class MemoryStorageAdapter {
   }
 
   async listSessions() {
-    const sessions = Array.from(this.store.values()).map((s) => ({
-      id: s.id,
-      name: s.name,
-      created: s.created,
-      updated: s.updated,
-      pointCount: Array.isArray(s.measurements) ? s.measurements.length : 0,
-      aspectRatio: s.aspectRatio,
-      hasDimensions: Boolean(s.roomDimensions),
-    }));
+    const sessions = Array.from(this.store.values()).map((s) => {
+      let exactRatio;
+      const dims = s.roomDimensions;
+      if (dims && Number.isFinite(dims.lengthM) && Number.isFinite(dims.widthM) && dims.lengthM > 0 && dims.widthM > 0) {
+        exactRatio = dims.lengthM / dims.widthM;
+      } else if (typeof s.aspectRatio === 'number') {
+        exactRatio = s.aspectRatio;
+      } else {
+        exactRatio = parseAspectRatio(s.aspectRatio || DEFAULT_ASPECT_RATIO);
+      }
+      return {
+        id: s.id,
+        name: s.name,
+        created: s.created,
+        updated: s.updated,
+        pointCount: Array.isArray(s.measurements) ? s.measurements.length : 0,
+        aspectRatio: exactRatio,
+        hasDimensions: Boolean(s.roomDimensions),
+      };
+    });
     // Sort by updated descending
     sessions.sort((a, b) => (b.updated || 0) - (a.updated || 0));
     return sessions;
@@ -165,15 +182,26 @@ export class IndexedDBAdapter {
         const req = store.getAll();
 
         req.onsuccess = () => {
-          const list = (req.result || []).map((s) => ({
-            id: s.id,
-            name: s.name,
-            created: s.created,
-            updated: s.updated,
-            pointCount: Array.isArray(s.measurements) ? s.measurements.length : 0,
-            aspectRatio: s.aspectRatio,
-            hasDimensions: Boolean(s.roomDimensions),
-          }));
+          const list = (req.result || []).map((s) => {
+            let exactRatio;
+            const dims = s.roomDimensions;
+            if (dims && Number.isFinite(dims.lengthM) && Number.isFinite(dims.widthM) && dims.lengthM > 0 && dims.widthM > 0) {
+              exactRatio = dims.lengthM / dims.widthM;
+            } else if (typeof s.aspectRatio === 'number') {
+              exactRatio = s.aspectRatio;
+            } else {
+              exactRatio = parseAspectRatio(s.aspectRatio || DEFAULT_ASPECT_RATIO);
+            }
+            return {
+              id: s.id,
+              name: s.name,
+              created: s.created,
+              updated: s.updated,
+              pointCount: Array.isArray(s.measurements) ? s.measurements.length : 0,
+              aspectRatio: exactRatio,
+              hasDimensions: Boolean(s.roomDimensions),
+            };
+          });
           list.sort((a, b) => (b.updated || 0) - (a.updated || 0));
           resolve(list);
         };
@@ -216,6 +244,37 @@ export class IndexedDBAdapter {
       }
     });
   }
+}
+
+/**
+ * Migrate old sessions on load.
+ * Converts string / rounded aspect ratios (e.g. "1.67:1", "4:3") to exact numeric ratio R = width/height.
+ * Uses dimensions when present (lengthM / widthM), otherwise stored numeric value.
+ *
+ * @param {object} session
+ * @returns {object} migrated session
+ */
+export function migrateSession(session) {
+  if (!session || typeof session !== 'object') return session;
+
+  const dims = session.roomDimensions;
+  if (
+    dims &&
+    Number.isFinite(dims.lengthM) &&
+    Number.isFinite(dims.widthM) &&
+    dims.lengthM > 0 &&
+    dims.widthM > 0
+  ) {
+    session.aspectRatio = dims.lengthM / dims.widthM;
+  } else if (session.aspectRatio != null) {
+    session.aspectRatio = typeof session.aspectRatio === 'number' && Number.isFinite(session.aspectRatio) && session.aspectRatio > 0
+      ? session.aspectRatio
+      : parseAspectRatio(session.aspectRatio);
+  } else {
+    session.aspectRatio = DEFAULT_ASPECT_RATIO;
+  }
+
+  return session;
 }
 
 /**
@@ -262,6 +321,7 @@ export class StorageService {
 
   /**
    * Save session to storage. Creates new ID and timestamps if missing.
+   * Stores aspectRatio as exact numeric ratio.
    *
    * @param {object} session
    * @returns {Promise<object>}
@@ -273,13 +333,31 @@ export class StorageService {
     }
 
     const now = Date.now();
+    const dims = session.roomDimensions;
+    let exactRatio;
+    if (
+      dims &&
+      Number.isFinite(dims.lengthM) &&
+      Number.isFinite(dims.widthM) &&
+      dims.lengthM > 0 &&
+      dims.widthM > 0
+    ) {
+      exactRatio = dims.lengthM / dims.widthM;
+    } else if (session.aspectRatio != null) {
+      exactRatio = typeof session.aspectRatio === 'number' && Number.isFinite(session.aspectRatio) && session.aspectRatio > 0
+        ? session.aspectRatio
+        : parseAspectRatio(session.aspectRatio);
+    } else {
+      exactRatio = DEFAULT_ASPECT_RATIO;
+    }
+
     const sessionToSave = {
       id: session.id || generateSessionId(),
       name: (session.name && session.name.trim()) || 'Untitled Session',
       created: session.created || now,
       updated: session.updated || now,
-      aspectRatio: session.aspectRatio || '4:3',
-      roomDimensions: session.roomDimensions ? { ...session.roomDimensions } : null,
+      aspectRatio: exactRatio,
+      roomDimensions: dims ? { ...dims } : null,
       source: session.source ? { ...session.source } : null,
       measurements: Array.isArray(session.measurements)
         ? session.measurements.map((m) => ({
@@ -301,14 +379,16 @@ export class StorageService {
   }
 
   /**
-   * Load session by ID.
+   * Load session by ID and migrate old schemas on load.
    *
    * @param {string} id
    * @returns {Promise<object|null>}
    */
   async get(id) {
     await this._init();
-    return this._adapter.getSession(id);
+    const session = await this._adapter.getSession(id);
+    if (!session) return null;
+    return migrateSession(session);
   }
 
   /**
@@ -318,7 +398,13 @@ export class StorageService {
    */
   async list() {
     await this._init();
-    return this._adapter.listSessions();
+    const sessions = await this._adapter.listSessions();
+    return sessions.map((s) => ({
+      ...s,
+      aspectRatio: typeof s.aspectRatio === 'number'
+        ? s.aspectRatio
+        : parseAspectRatio(s.aspectRatio || DEFAULT_ASPECT_RATIO),
+    }));
   }
 
   /**
@@ -354,20 +440,21 @@ export class StorageService {
    * Create a new blank session template.
    *
    * @param {string} [name='New Session']
-   * @param {string} [aspectRatio='4:3']
+   * @param {number|string} [aspectRatio=DEFAULT_ASPECT_RATIO]
    * @returns {object}
    */
-  createBlankSession(name = 'New Session', aspectRatio = '4:3') {
+  createBlankSession(name = 'New Session', aspectRatio = DEFAULT_ASPECT_RATIO) {
     const now = Date.now();
     return {
       id: generateSessionId(),
       name,
       created: now,
       updated: now,
-      aspectRatio,
+      aspectRatio: typeof aspectRatio === 'number' ? aspectRatio : parseAspectRatio(aspectRatio),
       roomDimensions: null,
       source: null,
       measurements: [],
     };
   }
 }
+

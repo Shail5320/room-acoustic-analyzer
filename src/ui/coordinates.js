@@ -158,3 +158,64 @@ export function relativeToPixel(rx, ry, roomBounds) {
 
   return { x: px, y: py };
 }
+
+/**
+ * Format a numeric aspect ratio into a friendly string (e.g. "4:3", "16:9", or "1.67:1").
+ *
+ * @param {number|string} ratio
+ * @returns {string}
+ */
+export function formatAspectRatio(ratio) {
+  const num = parseAspectRatio(ratio);
+  for (const preset of ASPECT_RATIO_PRESETS) {
+    if (Math.abs(preset.ratio - num) < 1e-4) {
+      return preset.value;
+    }
+  }
+  return `${parseFloat(num.toFixed(2))}:1`;
+}
+
+/**
+ * Extract the exact numeric aspect ratio R = width / height (Length / Width) for a session or model.
+ * Uses dimensions when present (lengthM / widthM), otherwise uses the stored numeric value.
+ *
+ * @param {object|null} sessionOrModel
+ * @returns {number}
+ */
+export function getExactAspectRatio(sessionOrModel) {
+  if (!sessionOrModel) return DEFAULT_ASPECT_RATIO;
+  const dims = sessionOrModel.roomDimensions;
+  if (
+    dims &&
+    Number.isFinite(dims.lengthM) &&
+    Number.isFinite(dims.widthM) &&
+    dims.lengthM > 0 &&
+    dims.widthM > 0
+  ) {
+    return dims.lengthM / dims.widthM;
+  }
+  const ratio = sessionOrModel.aspectRatio;
+  if (typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0) {
+    return ratio;
+  }
+  return parseAspectRatio(ratio);
+}
+
+/**
+ * Compute aspect-corrected Euclidean distance between two relative points in [0, 1].
+ * Formula: d = sqrt((dx · R)² + dy²) where R = width / height.
+ *
+ * @param {{ x: number, y: number }} p1 — first point
+ * @param {{ x: number, y: number }} p2 — second point
+ * @param {number|object} ratioOrSession — exact numeric ratio R, or session/model
+ * @returns {number} aspect-corrected distance
+ */
+export function aspectCorrectedDistance(p1, p2, ratioOrSession) {
+  const R = typeof ratioOrSession === 'number'
+    ? ratioOrSession
+    : getExactAspectRatio(ratioOrSession);
+  const dx = (p1.x - p2.x) * R;
+  const dy = p1.y - p2.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+

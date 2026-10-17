@@ -129,7 +129,8 @@ test('Requirement 5: Changing aspect ratio preserves relative marker coordinates
 
   // Switch aspect ratio to 16:9
   session.setAspectRatio('16:9');
-  assert.equal(session.aspectRatio, '16:9');
+  assert.equal(session.aspectRatio, 16 / 9);
+  assert.equal(session.aspectRatioString, '16:9');
   assert.equal(session.source.x, 0.2, 'Source relative X must remain unchanged');
   assert.equal(session.source.y, 0.4, 'Source relative Y must remain unchanged');
   assert.equal(session.measurements[0].x, 0.6, 'Measurement relative X must remain unchanged');

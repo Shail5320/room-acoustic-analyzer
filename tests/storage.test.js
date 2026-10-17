@@ -63,7 +63,7 @@ test('Storage - Save, load, list, and delete round-trip with in-memory adapter',
   const saved = await storage.save(sessionData);
   assert.ok(saved.id);
   assert.equal(saved.name, 'Control Room A');
-  assert.equal(saved.aspectRatio, '16:9');
+  assert.equal(saved.aspectRatio, 16 / 9);
   assert.equal(saved.measurements.length, 2);
 
   // 2. Load session

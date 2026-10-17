@@ -12,6 +12,7 @@
  */
 
 import { getRoomBounds, pixelToRelative, relativeToPixel } from './coordinates.js';
+import { HeatmapRenderer, drawHeatmapMeasurementMarker } from './heatmap.js';
 
 const MARKER_RADIUS_PX = 18;
 const HIT_RADIUS_PX = 26;
@@ -27,7 +28,10 @@ export class FloorPlanView {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.model = model;
-    this.mode = options.mode || 'measure'; // 'measure' or 'source'
+    this.mode = options.mode || 'measure'; // 'measure' | 'source' | 'heatmap'
+
+    this.heatmapRenderer = new HeatmapRenderer();
+    this.lastHeatmapStatus = null;
 
     this.dragTarget = null; // { type: 'source' } | { type: 'point', id: number }
     this.dragMoved = false;
@@ -57,10 +61,19 @@ export class FloorPlanView {
   }
 
   setMode(mode) {
-    if (mode === 'measure' || mode === 'source') {
+    if (mode === 'measure' || mode === 'source' || mode === 'heatmap') {
       this.mode = mode;
       this.render();
     }
+  }
+
+  setHeatmapRangeMode(rangeMode) {
+    this.heatmapRenderer.setRangeMode(rangeMode);
+    this.render();
+  }
+
+  getHeatmapStatus() {
+    return this.lastHeatmapStatus;
   }
 
   resize() {
@@ -154,6 +167,17 @@ export class FloorPlanView {
     this.startPos = { x: px, y: py };
     this.dragMoved = false;
 
+    // In heatmap mode, tapping selects marker for details or clears selection
+    if (this.mode === 'heatmap') {
+      if (hit && hit.type === 'point') {
+        this.model.selectPoint(hit.id);
+      } else {
+        this.model.selectPoint(null);
+      }
+      this.render();
+      return;
+    }
+
     if (hit) {
       this.dragTarget = hit;
       if (hit.type === 'point') {
@@ -240,11 +264,28 @@ export class FloorPlanView {
     const roomBounds = this.getRoomBounds();
 
     this._drawRoom(ctx, roomBounds, isDark);
-    this._drawGrid(ctx, roomBounds, isDark);
-    this._drawMeasurements(ctx, roomBounds, isDark);
+
+    if (this.mode === 'heatmap') {
+      this.lastHeatmapStatus = this.heatmapRenderer.render(ctx, roomBounds, this.model);
+      this._drawHeatmapMeasurements(ctx, roomBounds, isDark);
+    } else {
+      this._drawGrid(ctx, roomBounds, isDark);
+      this._drawMeasurements(ctx, roomBounds, isDark);
+    }
+
     this._drawSource(ctx, roomBounds, isDark);
 
     ctx.restore();
+  }
+
+  _drawHeatmapMeasurements(ctx, bounds, isDark) {
+    const activeBand = this.model.activeBand;
+    for (const m of this.model.measurements) {
+      const pt = relativeToPixel(m.x, m.y, bounds);
+      if (!pt) continue;
+      const isSelected = m.id === this.model.selectedPointId;
+      drawHeatmapMeasurementMarker(ctx, pt, m, activeBand, isSelected, isDark);
+    }
   }
 
   _drawRoom(ctx, bounds, isDark) {
@@ -265,7 +306,7 @@ export class FloorPlanView {
     ctx.fillStyle = isDark ? '#9ca3af' : '#64748b';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(`Room [${this.model.aspectRatio}]`, x + 8, y + 8);
+    ctx.fillText(`Room [${this.model.aspectRatioString || this.model.aspectRatio}]`, x + 8, y + 8);
   }
 
   _drawGrid(ctx, bounds, isDark) {

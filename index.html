@@ -150,6 +150,9 @@
             <button id="btn-mode-source" class="btn-segment" aria-pressed="false" type="button">
               Move Source
             </button>
+            <button id="btn-mode-heatmap" class="btn-segment" aria-pressed="false" type="button">
+              Heatmap
+            </button>
           </div>
           <select id="select-aspect-ratio" class="form-select" aria-label="Room aspect ratio"></select>
         </div>
@@ -164,6 +167,44 @@
         </button>
       </section>
 
+      <!-- Phase 5: Heatmap Controls & Legend -->
+      <section id="heatmap-card" class="card heatmap-card" hidden>
+        <div id="heatmap-dev-banner" class="heatmap-dev-banner" hidden>
+          ⚠️ DEV DATA — contains simulated test measurements
+        </div>
+
+        <div id="heatmap-unreliable-banner" class="heatmap-unreliable-banner" hidden>
+          <strong>⚠️ Low Data Reliability</strong>
+          <span>Not enough data for a reliable heatmap. We recommend at least 9 measurement points spread across the room.</span>
+        </div>
+
+        <!-- Selected Marker Detail Inspection -->
+        <div id="marker-detail-card" class="marker-detail-card" hidden>
+          <div class="marker-detail-header">
+            <span id="marker-detail-title" class="marker-detail-title">Measurement Details</span>
+            <button id="btn-close-marker-detail" class="btn-close-modal" type="button" aria-label="Close">✕</button>
+          </div>
+          <div id="marker-detail-body" class="marker-detail-grid"></div>
+        </div>
+
+        <div class="heatmap-controls-row">
+          <div class="heatmap-range-toggle segmented-group" role="radiogroup" aria-label="Color Scale Range">
+            <button id="btn-range-auto" class="btn-segment active" aria-pressed="true" type="button">Auto Range</button>
+            <button id="btn-range-fixed" class="btn-segment" aria-pressed="false" type="button">Fixed 0–2s</button>
+          </div>
+          <div class="marker-legend">
+            <span class="legend-item"><span class="legend-symbol symbol-valid"></span> Valid</span>
+            <span class="legend-item"><span class="legend-symbol symbol-approx"></span> Approx (≈)</span>
+            <span class="legend-item"><span class="legend-symbol symbol-source"></span> Source</span>
+          </div>
+        </div>
+
+        <div class="heatmap-legend-container">
+          <canvas id="heatmap-legend-canvas" class="heatmap-legend-canvas" height="48"></canvas>
+          <p class="heatmap-caption">Interpolated between measurement points; not a measurement.</p>
+        </div>
+      </section>
+
       <!-- Octave Band Filter for Inspecting RT60 -->
       <section class="card band-selector-card">
         <div class="band-selector-label">Inspect Octave Band</div>
@@ -175,6 +216,7 @@
           <button type="button" class="btn btn-band" data-band="2000">2 kHz</button>
           <button type="button" class="btn btn-band" data-band="4000">4 kHz</button>
         </div>
+        <div id="band-tier-summary" class="band-tier-summary" aria-live="polite"></div>
       </section>
 
       <!-- Scrollable Measurement Points List -->
@@ -192,7 +234,7 @@
         <ul id="measurement-list" class="measurement-list"></ul>
       </section>
 
-      <section class="card quick-status" data-version="echomap-v5">
+      <section class="card quick-status" data-version="echomap-v6">
         <h3>System & PWA Status</h3>
         <dl class="status-list">
           <div>
@@ -209,7 +251,7 @@
           </div>
           <div>
             <dt>Build Version:</dt>
-            <dd id="status-version">v5 (echomap-v5)</dd>
+            <dd id="status-version">v6 (echomap-v6)</dd>
           </div>
         </dl>
       </section>

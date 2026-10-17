@@ -12,7 +12,16 @@
  *   - Pure ES module: zero DOM dependencies, fully testable in node:test
  */
 
-import { DEFAULT_ASPECT_RATIO_STR, parseAspectRatio } from './coordinates.js';
+import {
+  DEFAULT_ASPECT_RATIO,
+  DEFAULT_ASPECT_RATIO_STR,
+  parseAspectRatio,
+  getExactAspectRatio,
+  aspectCorrectedDistance,
+  formatAspectRatio,
+} from './coordinates.js';
+
+export { getExactAspectRatio, aspectCorrectedDistance, formatAspectRatio };
 
 export const OCTAVE_BANDS = [125, 250, 500, 1000, 2000, 4000];
 
@@ -114,8 +123,25 @@ export class SessionModel {
     this.name = initialState.name || 'Untitled Session';
     this.created = initialState.created || Date.now();
     this.updated = initialState.updated || Date.now();
-    this.aspectRatio = initialState.aspectRatio || DEFAULT_ASPECT_RATIO_STR;
     this.roomDimensions = initialState.roomDimensions ? { ...initialState.roomDimensions } : null;
+
+    // Use dimensions when present, otherwise use stored numeric value (migrates strings on load)
+    if (
+      this.roomDimensions &&
+      Number.isFinite(this.roomDimensions.lengthM) &&
+      Number.isFinite(this.roomDimensions.widthM) &&
+      this.roomDimensions.lengthM > 0 &&
+      this.roomDimensions.widthM > 0
+    ) {
+      this.aspectRatio = this.roomDimensions.lengthM / this.roomDimensions.widthM;
+    } else if (initialState.aspectRatio != null) {
+      this.aspectRatio = typeof initialState.aspectRatio === 'number' && Number.isFinite(initialState.aspectRatio) && initialState.aspectRatio > 0
+        ? initialState.aspectRatio
+        : parseAspectRatio(initialState.aspectRatio);
+    } else {
+      this.aspectRatio = DEFAULT_ASPECT_RATIO;
+    }
+
     this.source = initialState.source
       ? {
           x: Math.max(0, Math.min(1, initialState.source.x)),
@@ -164,7 +190,16 @@ export class SessionModel {
 
   setRoomDimensions(dimensions) {
     this.roomDimensions = dimensions ? { ...dimensions } : null;
-    this._notify('roomDimensions', { roomDimensions: this.roomDimensions });
+    if (
+      this.roomDimensions &&
+      Number.isFinite(this.roomDimensions.lengthM) &&
+      Number.isFinite(this.roomDimensions.widthM) &&
+      this.roomDimensions.lengthM > 0 &&
+      this.roomDimensions.widthM > 0
+    ) {
+      this.aspectRatio = this.roomDimensions.lengthM / this.roomDimensions.widthM;
+    }
+    this._notify('roomDimensions', { roomDimensions: this.roomDimensions, aspectRatio: this.aspectRatio });
   }
 
   clearRoomDimensions() {
@@ -172,13 +207,25 @@ export class SessionModel {
     this._notify('roomDimensions', { roomDimensions: null });
   }
 
-  get parsedAspectRatio() {
-    return parseAspectRatio(this.aspectRatio);
+  get exactAspectRatio() {
+    return getExactAspectRatio(this);
   }
 
-  setAspectRatio(ratioStr) {
-    this.aspectRatio = String(ratioStr);
+  get parsedAspectRatio() {
+    return this.exactAspectRatio;
+  }
+
+  get aspectRatioString() {
+    return formatAspectRatio(this.exactAspectRatio);
+  }
+
+  setAspectRatio(ratio) {
+    this.aspectRatio = parseAspectRatio(ratio);
     this._notify('aspectRatio', { aspectRatio: this.aspectRatio });
+  }
+
+  aspectCorrectedDistance(p1, p2) {
+    return aspectCorrectedDistance(p1, p2, this.exactAspectRatio);
   }
 
   setActiveBand(band) {
@@ -350,7 +397,7 @@ export class SessionModel {
       name: this.name,
       created: this.created,
       updated: this.updated,
-      aspectRatio: this.aspectRatio,
+      aspectRatio: this.exactAspectRatio,
       roomDimensions: this.roomDimensions ? { ...this.roomDimensions } : null,
       source: this.source ? { ...this.source } : null,
       measurements: this.measurements.map((m) => ({
@@ -363,6 +410,7 @@ export class SessionModel {
 
   /**
    * Load session data into the model and notify listeners.
+   * Migrates old sessions with string aspectRatio or rounded ratios.
    *
    * @param {object} session
    */
@@ -372,8 +420,25 @@ export class SessionModel {
     this.name = session.name || 'Untitled Session';
     this.created = session.created || Date.now();
     this.updated = session.updated || Date.now();
-    this.aspectRatio = session.aspectRatio || DEFAULT_ASPECT_RATIO_STR;
     this.roomDimensions = session.roomDimensions ? { ...session.roomDimensions } : null;
+
+    // Migrate old sessions on load: exact numeric ratio from dimensions if present, otherwise stored numeric value
+    if (
+      this.roomDimensions &&
+      Number.isFinite(this.roomDimensions.lengthM) &&
+      Number.isFinite(this.roomDimensions.widthM) &&
+      this.roomDimensions.lengthM > 0 &&
+      this.roomDimensions.widthM > 0
+    ) {
+      this.aspectRatio = this.roomDimensions.lengthM / this.roomDimensions.widthM;
+    } else if (session.aspectRatio != null) {
+      this.aspectRatio = typeof session.aspectRatio === 'number' && Number.isFinite(session.aspectRatio) && session.aspectRatio > 0
+        ? session.aspectRatio
+        : parseAspectRatio(session.aspectRatio);
+    } else {
+      this.aspectRatio = DEFAULT_ASPECT_RATIO;
+    }
+
     this.source = session.source
       ? {
           x: Math.max(0, Math.min(1, session.source.x)),

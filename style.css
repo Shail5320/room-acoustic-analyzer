@@ -912,4 +912,161 @@ details[open] .dimensions-summary::after {
   min-width: 48px;
 }
 
+/* Phase 5: Heatmap Controls & Legend */
+.heatmap-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.heatmap-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.heatmap-range-toggle {
+  display: inline-flex;
+}
+
+.heatmap-range-toggle .btn-segment {
+  min-height: 48px;
+  padding: 8px 16px;
+}
+
+.heatmap-legend-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.heatmap-legend-canvas {
+  width: 100%;
+  height: 48px;
+  border-radius: 6px;
+  display: block;
+}
+
+.marker-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  align-items: center;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-symbol {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.symbol-valid {
+  background-color: #059669;
+  border: 1.5px solid #ffffff;
+}
+
+.symbol-approx {
+  background-color: #d97706;
+  border: 2px dashed #f59e0b;
+}
+
+.symbol-source {
+  background-color: #ea580c;
+  border: 1.5px solid #ffffff;
+}
+
+.heatmap-caption {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.heatmap-unreliable-banner {
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid #f59e0b;
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heatmap-dev-banner {
+  background-color: rgba(234, 88, 12, 0.15);
+  border: 1px solid #ea580c;
+  color: #ea580c;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.marker-detail-card {
+  background-color: var(--surface-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marker-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.marker-detail-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--primary-color);
+}
+
+.marker-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  font-size: 0.82rem;
+}
+
+.marker-detail-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.marker-detail-label {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.marker-detail-val {
+  font-weight: 600;
+}
+
+.band-tier-summary {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+
 
