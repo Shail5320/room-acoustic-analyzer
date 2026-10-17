@@ -29,10 +29,56 @@
     </header>
 
     <main id="app" class="app-container">
-      <section class="card">
-        <h2>App Shell Initialized</h2>
-        <p>Phase 1 app shell is active and offline-capable.</p>
-        <p class="meta-note">Measurement and analysis tools will be enabled in subsequent phases.</p>
+      <!-- Phase 4a: Floor Plan Workspace -->
+      <section class="card floorplan-card">
+        <div class="controls-row">
+          <div class="segmented-group" role="group" aria-label="Editor Mode">
+            <button id="btn-mode-measure" class="btn-segment active" aria-pressed="true" type="button">
+              Add Point
+            </button>
+            <button id="btn-mode-source" class="btn-segment" aria-pressed="false" type="button">
+              Move Source
+            </button>
+          </div>
+          <select id="select-aspect-ratio" class="form-select" aria-label="Room aspect ratio"></select>
+        </div>
+
+        <div class="floorplan-canvas-container">
+          <canvas id="floorplan-canvas" class="floorplan-canvas"></canvas>
+        </div>
+
+        <!-- Dev-only test measurement button (clearly marked DEV, easily removed) -->
+        <button id="btn-dev-fake" class="btn btn-dev" type="button">
+          [DEV] Add test measurement
+        </button>
+      </section>
+
+      <!-- Octave Band Filter for Inspecting RT60 -->
+      <section class="card band-selector-card">
+        <div class="band-selector-label">Inspect Octave Band</div>
+        <div id="band-selector" class="band-pills" role="group" aria-label="Octave Bands">
+          <button type="button" class="btn btn-band" data-band="125">125 Hz</button>
+          <button type="button" class="btn btn-band" data-band="250">250 Hz</button>
+          <button type="button" class="btn btn-band active" data-band="500">500 Hz</button>
+          <button type="button" class="btn btn-band" data-band="1000">1 kHz</button>
+          <button type="button" class="btn btn-band" data-band="2000">2 kHz</button>
+          <button type="button" class="btn btn-band" data-band="4000">4 kHz</button>
+        </div>
+      </section>
+
+      <!-- Scrollable Measurement Points List -->
+      <section class="card measurements-card">
+        <div class="measurements-header">
+          <div class="measurements-title">
+            <span>Measurement Points</span>
+            <span id="point-count-badge" class="count-badge">0 points</span>
+          </div>
+          <button id="btn-clear-points" class="btn-clear" type="button">Clear All</button>
+        </div>
+        <div id="empty-list-notice" class="empty-notice">
+          Tap inside the room on the floor plan above to place measurement points, or click the [DEV] button to add simulated measurements.
+        </div>
+        <ul id="measurement-list" class="measurement-list"></ul>
       </section>
 
       <section class="card quick-status">
@@ -101,5 +147,6 @@
       }
       updateDisplayMode();
     </script>
+    <script type="module" src="./src/ui/app.js"></script>
   </body>
 </html>
