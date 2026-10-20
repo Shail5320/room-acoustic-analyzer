@@ -508,6 +508,9 @@ export async function initApp() {
     }
 
     isAspectLockedToDimensions = true;
+    if (typeof updateStepStatuses === 'function') {
+      updateStepStatuses();
+    }
   }
 
   if (btnApplyDimensions) {
@@ -900,6 +903,9 @@ export async function initApp() {
 
     if (isTableView) {
       renderFloorPlanTable();
+    }
+    if (typeof updateStepStatuses === 'function') {
+      updateStepStatuses();
     }
   }
 
@@ -1820,6 +1826,9 @@ export async function initApp() {
       selectedPresetId = selectTargetPreset.value;
       updateTargetPresetSourceUI();
       updateTreatmentUI();
+      if (typeof updateStepStatuses === 'function') {
+        updateStepStatuses();
+      }
     });
   }
 
@@ -2251,6 +2260,159 @@ export async function initApp() {
   updateFakeWarningUI();
   updateHeatmapUI();
   loadDataFiles();
+
+  // -------------------------------------------------------------
+  // Guided Flow Navigation (1 Room, 2 Measure, 3 Map, 4 Treat, Show All)
+  // Navigation only: no changes to DSP, analysis, or storage logic.
+  // -------------------------------------------------------------
+  const stepStatus1 = document.getElementById('step-status-1');
+  const stepStatus2 = document.getElementById('step-status-2');
+  const stepStatus3 = document.getElementById('step-status-3');
+  const stepStatus4 = document.getElementById('step-status-4');
+  const stepButtons = document.querySelectorAll('.step-nav-btn');
+
+  function updateStepStatuses() {
+    // Step 1: Room (Never requires dimensions)
+    if (stepStatus1) {
+      const dims = model.roomDimensions;
+      if (dims && Number.isFinite(dims.lengthM) && Number.isFinite(dims.widthM)) {
+        stepStatus1.textContent = `${dims.lengthM.toFixed(1)}×${dims.widthM.toFixed(1)}m`;
+      } else {
+        stepStatus1.textContent = 'dimensions: optional';
+      }
+    }
+
+    // Step 2: Measure
+    if (stepStatus2) {
+      const pts = model.measurements || [];
+      const measured = pts.filter((p) => p.status === 'measured').length;
+      if (pts.length === 0) {
+        stepStatus2.textContent = 'Ready to measure';
+      } else {
+        stepStatus2.textContent = `${measured} of ${pts.length} measured`;
+      }
+    }
+
+    // Step 3: Map
+    if (stepStatus3) {
+      const pts = model.measurements || [];
+      const usable = getUsablePoints(pts, model.activeBand).length;
+      if (usable >= 4) {
+        stepStatus3.textContent = `Heatmap (${usable} pts)`;
+      } else if (pts.length > 0) {
+        stepStatus3.textContent = `${pts.length} ${pts.length === 1 ? 'pt' : 'pts'} mapped`;
+      } else {
+        stepStatus3.textContent = 'Floor plan';
+      }
+    }
+
+    // Step 4: Treat
+    if (stepStatus4) {
+      const selectPreset = document.getElementById('select-target-preset');
+      const presetName = selectPreset && selectPreset.selectedOptions && selectPreset.selectedOptions[0]
+        ? selectPreset.selectedOptions[0].textContent.split('(')[0].trim()
+        : 'Targets & panels';
+      stepStatus4.textContent = presetName || 'Targets & panels';
+    }
+  }
+
+  let currentStep = 'all';
+  try {
+    const savedStep = localStorage.getItem('echomap_guided_step');
+    if (savedStep && ['1', '2', '3', '4', 'all'].includes(savedStep)) {
+      currentStep = savedStep;
+    }
+  } catch (_) {}
+
+  function setGuidedStep(step) {
+    currentStep = step;
+    try {
+      localStorage.setItem('echomap_guided_step', step);
+    } catch (_) {}
+
+    stepButtons.forEach((btn) => {
+      const isTarget = btn.getAttribute('data-step') === step;
+      btn.classList.toggle('active', isTarget);
+      btn.setAttribute('aria-selected', String(isTarget));
+    });
+
+    const sessionCard = document.querySelector('.session-card');
+    const dimensionsPanel = document.getElementById('dimensions-panel');
+    const floorplanCard = document.querySelector('.floorplan-card');
+    const analyzeCard = document.getElementById('analyze-card');
+    const heatmapCard = document.getElementById('heatmap-card');
+    const treatmentCard = document.getElementById('treatment-card');
+    const bandSelectorCard = document.querySelector('.band-selector-card');
+    const measurementsCard = document.querySelector('.measurements-card');
+    const quickStatusCard = document.querySelector('.quick-status');
+
+    if (step === 'all') {
+      if (sessionCard) sessionCard.hidden = false;
+      if (dimensionsPanel) dimensionsPanel.hidden = false;
+      if (floorplanCard) floorplanCard.hidden = false;
+      if (analyzeCard) analyzeCard.hidden = false;
+      if (treatmentCard) treatmentCard.hidden = false;
+      if (bandSelectorCard) bandSelectorCard.hidden = false;
+      if (measurementsCard) measurementsCard.hidden = false;
+      if (quickStatusCard) quickStatusCard.hidden = false;
+      if (heatmapCard) heatmapCard.hidden = currentMode !== 'heatmap';
+    } else if (step === '1') {
+      if (sessionCard) sessionCard.hidden = false;
+      if (dimensionsPanel) dimensionsPanel.hidden = false;
+      if (floorplanCard) floorplanCard.hidden = false;
+      if (quickStatusCard) quickStatusCard.hidden = false;
+      if (analyzeCard) analyzeCard.hidden = true;
+      if (heatmapCard) heatmapCard.hidden = true;
+      if (treatmentCard) treatmentCard.hidden = true;
+      if (bandSelectorCard) bandSelectorCard.hidden = true;
+      if (measurementsCard) measurementsCard.hidden = true;
+    } else if (step === '2') {
+      if (analyzeCard) analyzeCard.hidden = false;
+      if (sessionCard) sessionCard.hidden = false;
+      if (quickStatusCard) quickStatusCard.hidden = false;
+      if (dimensionsPanel) dimensionsPanel.hidden = true;
+      if (floorplanCard) floorplanCard.hidden = true;
+      if (heatmapCard) heatmapCard.hidden = true;
+      if (treatmentCard) treatmentCard.hidden = true;
+      if (bandSelectorCard) bandSelectorCard.hidden = true;
+      if (measurementsCard) measurementsCard.hidden = true;
+    } else if (step === '3') {
+      if (floorplanCard) floorplanCard.hidden = false;
+      if (bandSelectorCard) bandSelectorCard.hidden = false;
+      if (measurementsCard) measurementsCard.hidden = false;
+      if (quickStatusCard) quickStatusCard.hidden = false;
+      if (heatmapCard) heatmapCard.hidden = currentMode !== 'heatmap';
+      if (sessionCard) sessionCard.hidden = true;
+      if (dimensionsPanel) dimensionsPanel.hidden = true;
+      if (analyzeCard) analyzeCard.hidden = true;
+      if (treatmentCard) treatmentCard.hidden = true;
+    } else if (step === '4') {
+      if (treatmentCard) treatmentCard.hidden = false;
+      if (bandSelectorCard) bandSelectorCard.hidden = false;
+      if (dimensionsPanel) dimensionsPanel.hidden = false;
+      if (quickStatusCard) quickStatusCard.hidden = false;
+      if (sessionCard) sessionCard.hidden = true;
+      if (floorplanCard) floorplanCard.hidden = true;
+      if (analyzeCard) analyzeCard.hidden = true;
+      if (heatmapCard) heatmapCard.hidden = true;
+      if (measurementsCard) measurementsCard.hidden = true;
+    }
+
+    if (view && (step === '1' || step === '3' || step === 'all')) {
+      view.resizeCanvas();
+      view.render();
+    }
+  }
+
+  stepButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const step = btn.getAttribute('data-step');
+      if (step) setGuidedStep(step);
+    });
+  });
+
+  setGuidedStep(currentStep);
+  updateStepStatuses();
 }
 
 if (document.readyState === 'loading') {

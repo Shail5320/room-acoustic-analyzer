@@ -34,6 +34,51 @@
     </header>
 
     <main id="app" class="app-container">
+      <!-- Guided Step Navigation Bar (1 Room, 2 Measure, 3 Map, 4 Treat, Show All) -->
+      <nav id="guided-flow-nav" class="guided-flow-nav" aria-label="Acoustic Workflow Steps">
+        <div class="guided-steps-scroll" role="tablist" aria-label="Workflow Steps">
+          <button id="step-btn-1" class="step-nav-btn active" role="tab" aria-selected="true" data-step="1" type="button">
+            <span class="step-num">1</span>
+            <span class="step-labels">
+              <span class="step-title">Room</span>
+              <span id="step-status-1" class="step-status">dimensions: optional</span>
+            </span>
+          </button>
+
+          <button id="step-btn-2" class="step-nav-btn" role="tab" aria-selected="false" data-step="2" type="button">
+            <span class="step-num">2</span>
+            <span class="step-labels">
+              <span class="step-title">Measure</span>
+              <span id="step-status-2" class="step-status">0 points measured</span>
+            </span>
+          </button>
+
+          <button id="step-btn-3" class="step-nav-btn" role="tab" aria-selected="false" data-step="3" type="button">
+            <span class="step-num">3</span>
+            <span class="step-labels">
+              <span class="step-title">Map</span>
+              <span id="step-status-3" class="step-status">Floor plan</span>
+            </span>
+          </button>
+
+          <button id="step-btn-4" class="step-nav-btn" role="tab" aria-selected="false" data-step="4" type="button">
+            <span class="step-num">4</span>
+            <span class="step-labels">
+              <span class="step-title">Treat</span>
+              <span id="step-status-4" class="step-status">Targets & panels</span>
+            </span>
+          </button>
+
+          <button id="step-btn-all" class="step-nav-btn step-nav-all" role="tab" aria-selected="false" data-step="all" type="button">
+            <span class="step-num">☰</span>
+            <span class="step-labels">
+              <span class="step-title">Show All</span>
+              <span class="step-status">Full layout</span>
+            </span>
+          </button>
+        </div>
+      </nav>
+
       <!-- Session Management Card -->
       <section class="card session-card">
         <div class="session-header-row">
