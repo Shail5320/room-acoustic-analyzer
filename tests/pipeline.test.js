@@ -49,6 +49,8 @@ import {
   OCTAVE_CENTRES,
   PRE_PEAK_MS,
   LOW_PNR_POST_PRE_MARGIN_DB,
+  SWEEP_REJECT_NOT_SWEEP,
+  SWEEP_REJECT_NO_SWEEP,
 } from '../src/analysis/config.js';
 import { generateSweep, generateInverseFilter } from '../src/dsp/sweep.js';
 import { convolveDirect, deconvolve, findPeakAndPNR } from '../src/dsp/deconvolve.js';
@@ -801,17 +803,19 @@ test('Pipeline: Non-stationary noise tests without sweep present (clap, burst, 5
   console.log('  - Case (c) (50 Hz hum + noise): Override is NOT offered (canOverrideLowPnr: false) because DeltaPostPre = -0.2 dB,');
   console.log('    which is safely blocked by the 1.5 dB energy margin gate.\n');
 
-  // Assertions documenting the observed behavior without changing pipeline thresholds
+  // Assertions verifying that sweep-signature and deltaPostPre gates block non-sweep cases
   const metricsA = computeDeltaPostPreLocal(clapSignal);
   const resNormalA = analyzeRecording({ samples: clapSignal, sampleRate });
   assert.equal(resNormalA.ok, false);
-  assert.equal(resNormalA.canOverrideLowPnr, true, 'Case (a) impulsive clap qualifies for override offer');
+  assert.equal(resNormalA.canOverrideLowPnr, false, 'Case (a) impulsive clap blocked by sweep signature gate');
+  assert.equal(resNormalA.rejectReason, SWEEP_REJECT_NOT_SWEEP);
   assert.ok(metricsA.deltaPostPreDb >= LOW_PNR_POST_PRE_MARGIN_DB);
 
   const metricsB = computeDeltaPostPreLocal(burstSignal);
   const resNormalB = analyzeRecording({ samples: burstSignal, sampleRate });
   assert.equal(resNormalB.ok, false);
-  assert.equal(resNormalB.canOverrideLowPnr, true, 'Case (b) burst qualifies for override offer');
+  assert.equal(resNormalB.canOverrideLowPnr, false, 'Case (b) burst blocked by sweep signature gate');
+  assert.equal(resNormalB.rejectReason, SWEEP_REJECT_NOT_SWEEP);
   assert.ok(metricsB.deltaPostPreDb >= LOW_PNR_POST_PRE_MARGIN_DB);
 
   const metricsC = computeDeltaPostPreLocal(humSignal);
@@ -819,6 +823,55 @@ test('Pipeline: Non-stationary noise tests without sweep present (clap, burst, 5
   assert.equal(resNormalC.ok, false);
   assert.equal(resNormalC.canOverrideLowPnr, false, 'Case (c) 50 Hz hum is blocked by deltaPostPre gate');
   assert.ok(metricsC.deltaPostPreDb < LOW_PNR_POST_PRE_MARGIN_DB);
+
+  // Test that analyzeRecording itself refuses internally when allowLowPnr is passed and canOverrideLowPnr is false
+  const resForcedHum = analyzeRecording({ samples: humSignal, sampleRate, options: { allowLowPnr: true } });
+  assert.equal(resForcedHum.ok, false, 'analyzeRecording must refuse internally when allowLowPnr is passed and canOverrideLowPnr is false');
+  assert.equal(resForcedHum.bands, null);
+});
+
+test('Pipeline: Sweep signature gate — clap regression test (clean and noisy claps rejected)', () => {
+  const sampleRate = 48000;
+  const totalSamples = Math.round(8.5 * sampleRate);
+
+  // 1. Clean loud clap (would produce PNR ~25.8 dB and pass normal gate without sweep-signature)
+  const cleanClap = new Float64Array(totalSamples);
+  const rngClap = createMulberry32(999);
+  const clapStart = Math.round(2.0 * sampleRate);
+  for (let i = 0; i < Math.round(0.5 * sampleRate); i++) {
+    const t = i / sampleRate;
+    cleanClap[clapStart + i] = boxMuller(rngClap) * 0.8 * Math.exp(-t / 0.03);
+  }
+
+  const resCleanClap = analyzeRecording({ samples: cleanClap, sampleRate });
+  assert.strictEqual(resCleanClap.ok, false, 'Clean clap must be rejected by sweep signature gate');
+  assert.strictEqual(resCleanClap.canOverrideLowPnr, false, 'Clean clap must not qualify for override');
+  assert.strictEqual(
+    resCleanClap.rejectReason,
+    SWEEP_REJECT_NOT_SWEEP
+  );
+  assert.strictEqual(resCleanClap.bands, null);
+
+  // 2. Clap with background noise (would produce PNR ~19 dB and DeltaPostPre ~9 dB, qualifying for override without gate)
+  const noisyClap = new Float64Array(totalSamples);
+  for (let i = 0; i < totalSamples; i++) noisyClap[i] = boxMuller(rngClap) * 0.005;
+  for (let i = 0; i < Math.round(0.5 * sampleRate); i++) {
+    const t = i / sampleRate;
+    noisyClap[clapStart + i] += boxMuller(rngClap) * 0.3 * Math.exp(-t / 0.03);
+  }
+
+  const resNoisyClap = analyzeRecording({ samples: noisyClap, sampleRate });
+  assert.strictEqual(resNoisyClap.ok, false, 'Noisy clap must be rejected by sweep signature gate');
+  assert.strictEqual(resNoisyClap.canOverrideLowPnr, false, 'Noisy clap must not qualify for override');
+  assert.strictEqual(
+    resNoisyClap.rejectReason,
+    SWEEP_REJECT_NOT_SWEEP
+  );
+
+  // 3. Forcing override with allowLowPnr: true must refuse internally
+  const resForcedClap = analyzeRecording({ samples: noisyClap, sampleRate, options: { allowLowPnr: true } });
+  assert.strictEqual(resForcedClap.ok, false, 'Clap with allowLowPnr: true must refuse internally');
+  assert.strictEqual(resForcedClap.bands, null);
 });
 
 

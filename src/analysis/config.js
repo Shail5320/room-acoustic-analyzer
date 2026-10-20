@@ -27,6 +27,20 @@ export const SILENCE_THRESHOLD = 1e-6;        // Max absolute sample value below
 export const DECAY_TAIL_MARGIN_DB = 6.0;      // Tail envelope threshold above pre-peak noise floor (dB)
 
 // ---------------------------------------------------------------------------
+// Sweep Signature Validation (Octave Band Progression Gate)
+// ---------------------------------------------------------------------------
+export const SWEEP_SIG_MIN_SCORE = 0.65;          // Minimum continuous progression score [0, 1]
+export const SWEEP_SIG_MIN_MONOTONIC_STEPS = 4;   // Minimum number of positive intervals (out of 5)
+export const SWEEP_SIG_MIN_SPAN_S = 2.2;          // Minimum total octave span t_4000 - t_125 (s)
+export const SWEEP_SIG_MAX_SPAN_S = 4.8;          // Maximum total octave span t_4000 - t_125 (s)
+export const SWEEP_SIG_BLOCK_MS = 50.0;           // Band energy integration window length (ms)
+export const SWEEP_SIG_HOP_MS = 25.0;             // Band energy integration hop length (ms)
+export const SWEEP_REJECT_NOT_SWEEP =
+  "This doesn't look like the EchoMap test sweep (a clap or another sound was recorded instead). Play the downloaded sweep.";
+export const SWEEP_REJECT_NO_SWEEP =
+  'No sweep detected — make sure the source played during recording';
+
+// ---------------------------------------------------------------------------
 // IR Extraction & Octave Band Configuration
 // ---------------------------------------------------------------------------
 export const OCTAVE_CENTRES = [125, 250, 500, 1000, 2000, 4000];
@@ -43,6 +57,10 @@ export const PIPELINE_CONFIG = {
   pnrThresholdDb: PNR_THRESHOLD_DB,
   lowPnrOverrideMinDb: LOW_PNR_OVERRIDE_MIN_DB,
   lowPnrPostPreMarginDb: LOW_PNR_POST_PRE_MARGIN_DB,
+  sweepSigMinScore: SWEEP_SIG_MIN_SCORE,
+  sweepSigMinSteps: SWEEP_SIG_MIN_MONOTONIC_STEPS,
+  sweepSigMinSpanS: SWEEP_SIG_MIN_SPAN_S,
+  sweepSigMaxSpanS: SWEEP_SIG_MAX_SPAN_S,
   minSampleRate: MIN_SAMPLE_RATE,
   minDurationS: MIN_RECORDING_DURATION_S,
   maxDurationS: MAX_RECORDING_DURATION_S,

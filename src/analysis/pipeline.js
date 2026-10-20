@@ -29,6 +29,14 @@ import {
   PNR_THRESHOLD_DB,
   LOW_PNR_OVERRIDE_MIN_DB,
   LOW_PNR_POST_PRE_MARGIN_DB,
+  SWEEP_SIG_MIN_SCORE,
+  SWEEP_SIG_MIN_MONOTONIC_STEPS,
+  SWEEP_SIG_MIN_SPAN_S,
+  SWEEP_SIG_MAX_SPAN_S,
+  SWEEP_SIG_BLOCK_MS,
+  SWEEP_SIG_HOP_MS,
+  SWEEP_REJECT_NOT_SWEEP,
+  SWEEP_REJECT_NO_SWEEP,
   MIN_SAMPLE_RATE,
   MIN_RECORDING_DURATION_S,
   MAX_RECORDING_DURATION_S,
@@ -119,6 +127,139 @@ export function downsampleCurve(t, y, targetPoints = EDC_PLOT_POINTS) {
     outY[i] = y[idx];
   }
   return { t: outT, edcDb: outY };
+}
+
+// ---------------------------------------------------------------------------
+// Sweep Signature Validation (Octave Band Progression Gate)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate that the recording contains the expected exponential sine sweep
+ * by verifying the sequential chronological progression of octave band energy peaks.
+ *
+ * Principle:
+ * An exponential sine sweep from f1 to f2 over duration T has an instantaneous frequency:
+ *   f(t) = f1 * exp(t / L), where L = T / ln(f2 / f1).
+ * Passing through successive octave band centres (125 to 4000 Hz) takes:
+ *   Delta t = L * ln(2) ~= 0.683 s per octave step.
+ * A genuine room sweep exhibits sequential energy peaks across all 6 octave bands
+ * spaced approximately 0.68 s apart (total span t_4000 - t_125 ~= 3.41 s).
+ * In contrast:
+ *   - A hand clap or impulse puts energy into all bands at the exact same instant (dt ~= 0).
+ *   - Ambient noise, speech bursts, or mains hum exhibit no systematic ordering.
+ *
+ * @param {Float32Array|Float64Array} signal - Audio samples
+ * @param {number} sampleRate - Audio sample rate (Hz)
+ * @param {object} [options] - Pipeline options
+ * @returns {{
+ *   ok: boolean,
+ *   score: number,
+ *   monotonicCount: number,
+ *   dtValidCount: number,
+ *   totalSpan: number,
+ *   meanDtError: number,
+ *   peakTimes: number[],
+ *   dtList: number[]
+ * }}
+ */
+export function checkSweepSignature(signal, sampleRate, options = {}) {
+  if (!signal || signal.length === 0) {
+    return { ok: false, score: 0, monotonicCount: 0, dtValidCount: 0, totalSpan: 0, meanDtError: 0, peakTimes: [], dtList: [] };
+  }
+
+  const f1 = options.f1 || SWEEP_F1;
+  const f2 = options.f2 || SWEEP_F2;
+  const T = options.T || SWEEP_DURATION_S;
+  const centres = options.octaveCentres || OCTAVE_CENTRES;
+
+  const filters = designOctaveFilters(sampleRate, centres);
+  const blockMs = options.sigBlockMs || SWEEP_SIG_BLOCK_MS;
+  const hopMs = options.sigHopMs || SWEEP_SIG_HOP_MS;
+  const blockSamples = Math.round(blockMs * 1e-3 * sampleRate);
+  const hopSamples = Math.round(hopMs * 1e-3 * sampleRate);
+  const numHops = Math.max(1, Math.floor((signal.length - blockSamples) / hopSamples) + 1);
+
+  const peakTimes = [];
+  const peakValues = [];
+
+  for (const fc of centres) {
+    const sos = filters.get(fc);
+    const filtered = sosFilt(sos, signal);
+
+    let maxEnergy = 0;
+    let maxHop = 0;
+
+    for (let h = 0; h < numHops; h++) {
+      const start = h * hopSamples;
+      let sumSq = 0;
+      for (let i = 0; i < blockSamples; i++) {
+        const val = filtered[start + i];
+        sumSq += val * val;
+      }
+      const rms = Math.sqrt(sumSq / blockSamples);
+      if (rms > maxEnergy) {
+        maxEnergy = rms;
+        maxHop = h;
+      }
+    }
+
+    const tPeak = (maxHop * hopSamples + blockSamples / 2) / sampleRate;
+    peakTimes.push(tPeak);
+    peakValues.push(maxEnergy);
+  }
+
+  const expectedDt = (T / Math.log(f2 / f1)) * Math.LN2; // ~0.6829 s
+  const expectedTotalSpan = (centres.length - 1) * expectedDt; // ~3.414 s
+
+  const dtList = [];
+  let monotonicCount = 0;
+  let dtValidCount = 0;
+  const dtErrors = [];
+
+  for (let k = 0; k < peakTimes.length - 1; k++) {
+    const dt = peakTimes[k + 1] - peakTimes[k];
+    dtList.push(dt);
+    if (dt > 0.05) {
+      monotonicCount++;
+    }
+    if (dt >= 0.20 && dt <= 1.40) {
+      dtValidCount++;
+    }
+    dtErrors.push(Math.abs(dt - expectedDt));
+  }
+
+  const totalSpan = peakTimes[peakTimes.length - 1] - peakTimes[0];
+  const meanDtError = dtErrors.reduce((a, b) => a + b, 0) / dtErrors.length;
+
+  const minSpan = options.sigMinSpanS ?? SWEEP_SIG_MIN_SPAN_S;
+  const maxSpan = options.sigMaxSpanS ?? SWEEP_SIG_MAX_SPAN_S;
+  const minScore = options.sigMinScore ?? SWEEP_SIG_MIN_SCORE;
+  const minSteps = options.sigMinSteps ?? SWEEP_SIG_MIN_MONOTONIC_STEPS;
+
+  const spanOk = totalSpan >= minSpan && totalSpan <= maxSpan;
+
+  // Composite score:
+  // 40% weight on monotonicity ratio (intervals > 50ms)
+  // 30% weight on interval closeness to theoretical 0.68s
+  // 30% weight on total span closeness to theoretical 3.41s
+  const score = (
+    0.40 * (monotonicCount / Math.max(1, peakTimes.length - 1)) +
+    0.30 * Math.max(0, 1.0 - meanDtError / expectedDt) +
+    0.30 * Math.max(0, 1.0 - Math.abs(totalSpan - expectedTotalSpan) / expectedTotalSpan)
+  );
+
+  const ok = (monotonicCount >= minSteps) && spanOk && (score >= minScore);
+
+  return {
+    ok,
+    score: Math.round(score * 1000) / 1000,
+    monotonicCount,
+    dtValidCount,
+    totalSpan: Math.round(totalSpan * 100) / 100,
+    meanDtError: Math.round(meanDtError * 1000) / 1000,
+    peakTimes,
+    dtList,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,24 +492,66 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
   const lowPnrFloor = options.lowPnrOverrideMinDb ?? LOW_PNR_OVERRIDE_MIN_DB;
   const lowPnrMargin = options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB;
 
+  // Sweep-signature gate: verify the recording contains our test sweep progression
+  const tSigStart = performance.now();
+  const sweepSig = checkSweepSignature(signal, sampleRate, options);
+  timingsMs.sweepSigMs = performance.now() - tSigStart;
+
+  // The low-PNR override is strictly gated by all three criteria:
+  // 1. PNR inside [lowPnrFloor, pnrThreshold)
+  // 2. Post-peak direct energy margin >= 1.5 dB (excludes stationary noise)
+  // 3. Sweep signature progression confirmed (excludes claps, pops, and bursts)
   const canOverrideLowPnr = (peakVal > 1e-12) &&
     (roundedPnrDb >= lowPnrFloor) &&
     (roundedPnrDb < pnrThreshold) &&
-    (deltaPostPreDb >= lowPnrMargin);
+    (deltaPostPreDb >= lowPnrMargin) &&
+    sweepSig.ok;
 
+  // Gate 1: Sweep signature check (applies to normal path and override path)
+  if (!sweepSig.ok) {
+    let rejectReason;
+    if (roundedPnrDb >= pnrThreshold || (peakVal > 1e-12 && deltaPostPreDb >= lowPnrMargin)) {
+      rejectReason = SWEEP_REJECT_NOT_SWEEP;
+    } else {
+      rejectReason = SWEEP_REJECT_NO_SWEEP;
+    }
+
+    return {
+      ok: false,
+      rejectReason,
+      warning: null,
+      decayTruncated: false,
+      canOverrideLowPnr: false,
+      lowConfidence: false,
+      pnrDb: roundedPnrDb,
+      dynamicRangeDb: 0,
+      weakestBandHz: null,
+      clipped,
+      irPlot: null,
+      edcPlot: null,
+      bands: null,
+      sweepSignature: sweepSig,
+      timingsMs: {
+        ...timingsMs,
+        totalMs: performance.now() - startTime,
+      },
+    };
+  }
+
+  // Gate 2: PNR check
   let lowConfidence = false;
   let warning = null;
 
   if (peakVal <= 1e-12 || roundedPnrDb < pnrThreshold) {
     const allowLowPnr = Boolean(options.allowLowPnr);
-    // If allowLowPnr is passed and signal exceeds floor, proceed with lowConfidence
-    if (allowLowPnr && peakVal > 1e-12 && roundedPnrDb >= lowPnrFloor) {
+    // Refuse internally unless allowLowPnr is requested AND canOverrideLowPnr is true
+    if (allowLowPnr && canOverrideLowPnr) {
       lowConfidence = true;
       warning = 'Low signal-to-noise ratio: results have reduced precision';
     } else {
       return {
         ok: false,
-        rejectReason: 'No sweep detected — make sure the source played during recording',
+        rejectReason: SWEEP_REJECT_NO_SWEEP,
         warning: null,
         decayTruncated: false,
         canOverrideLowPnr,
@@ -380,6 +563,7 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         irPlot: null,
         edcPlot: null,
         bands: null,
+        sweepSignature: sweepSig,
         timingsMs: {
           ...timingsMs,
           totalMs: performance.now() - startTime,
@@ -520,6 +704,7 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
     irPlot,
     edcPlot,
     bands,
+    sweepSignature: sweepSig,
     timingsMs,
   };
 }

@@ -205,7 +205,34 @@ Because low-confidence measurements can introduce false or imprecise decays, Ech
 2. **Cause: Sweep Edge Truncation vs. Butterworth Ringing:**
    - Recovering a known exponential decay (0.3 s) directly through the 125 Hz Butterworth bandpass filter without sweep deconvolution yields a mean error of only $+0.22\%$, ruling out internal Butterworth filter impulse ringing as the primary driver.
    - Deconvolving a sweep starting at $f_1 = 50\text{ Hz}$ yields $+8.52\%$ error, whereas starting the sweep at $f_1 = 20\text{ Hz}$ reduces the error to $+1.11\%$.
-   - **Conclusion:** The positive bias at 125 Hz is primarily caused by **sweep start-frequency truncation** ($f_1 = 50\text{ Hz}$ truncates the lower filter skirt of the 125 Hz octave band, which extends down toward 44–60 Hz). Filter ringing is labeled strictly as an unproven secondary hypothesis.
+   - **Conclusion:** The positive bias at 125 Hz is real and physically driven by **sweep start-frequency truncation** ($f_1 = 50\text{ Hz}$ truncates the lower filter skirt of the 125 Hz octave band, which extends down toward 44–60 Hz). Filter ringing was experimentally ruled out as negligible (+0.22%). In future iterations, playing the test sweep from an external sound source capable of reproducing down to 20–30 Hz would alleviate this lower-skirt truncation.
+
+---
+
+### Question 5: Why can't EchoMap analyse handclaps or balloon pops, and how does the sweep-signature gate protect against impulse sounds?
+
+**Answer:**
+1. **The Impulse Deconvolution Illusion:**
+   EchoMap relies on Farina's synchronous exponential sine sweep technique. When a room impulse response $h(t)$ is excited by sweep $s(t)$, the recorded microphone signal is $y(t) = s(t) * h(t) + n(t)$. Convolving $y(t)$ with the analytical inverse filter $f(t)$ collapses the sweep into a Dirac-like impulse $\delta(t)$, recovering $h(t) = f(t) * y(t)$.
+
+   However, if a user claps their hands or pops a balloon instead of playing the sweep, the acoustic input is approximately an impulse: $y(t) \approx \delta(t)$. Convolving this with the inverse filter yields:
+   $$y(t) * f(t) \approx \delta(t) * f(t) = f(t)$$
+   The deconvolution output is **the inverse filter itself** — an amplitude-decaying chirp sweeping backwards from high frequencies to low frequencies. When filtered into octave bands, the tail of this chirp produces energy decay curves that look deceivingly like real room decays (e.g., $R^2 > 0.99$ at 2 kHz and 4 kHz), creating false RT60 readings.
+2. **The Sweep-Signature Gate:**
+   To prevent claps, balloon pops, and non-sweep ambient transients from being analyzed, EchoMap implements a chronological octave-band progression gate (`checkSweepSignature` in `src/analysis/pipeline.js`):
+   - In an exponential sine sweep $f(t) = f_1 \cdot e^{t / L}$ (where $L = T / \ln(f_2 / f_1) \approx 0.985$ s for $T = 5$ s, $50 \to 8000$ Hz), the sweep passes through each octave band center frequency in strict chronological order ($125 \to 250 \to 500 \to 1000 \to 2000 \to 4000$ Hz).
+   - The time between successive octave center frequencies is constant:
+     $$\Delta t = L \cdot \ln(2) \approx 0.683\text{ s}$$
+   - The total sweep duration across these 6 band centers is approximately $5 \times 0.683\text{ s} \approx 3.41$ s.
+   - A handclap or impulse distributes acoustic energy into all octave bands simultaneously ($\Delta t \approx 0$ s).
+   - Ambient stationary noise or hum produces random, uncorrelated peak arrival times across bands.
+3. **Decision Logic & Rejection:**
+   The gate measures 50 ms RMS block envelopes (25 ms hop) across all 6 octave bands of the raw recording:
+   - Evaluates whether band peak times are monotonically increasing ($t_{125} < t_{250} < \dots < t_{4000}$).
+   - Scores inter-band intervals against the expected $\approx 0.68$ s spacing (tolerance window $[0.35, 1.15]$ s accounting for room reverberation delays).
+   - Rejects recordings with score $< 0.65$ or span $< 2.2$ s, returning the clear user guidance:
+     *"This doesn't look like the EchoMap test sweep (a clap or another sound was recorded instead). Play the downloaded sweep."*
+   - Applied universally on both the normal analysis path and the low-PNR override path. Override is internally refused if the sweep signature is absent.
 
 ---
 

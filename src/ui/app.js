@@ -44,6 +44,7 @@ import { renderHeatmapLegendCanvas } from './heatmap.js';
 import { loadAudioFile } from '../audio/wav.js';
 import { downloadSweepWav } from '../audio/sweep-wav.js';
 import { runSelfTest } from '../analysis/selftest.js';
+import { interpolateUncertainty } from '../analysis/uncertainty.js';
 import { formatDecibels, formatAudioErrorMessage, formatTimeAgo } from './format.js';
 import { HELP_TOPICS } from './help.js';
 import {
@@ -233,6 +234,7 @@ export async function initApp() {
     4000: 2,
   };
   let typicalUncertaintyPct = { ...DEFAULT_UNCERTAINTY_PCT };
+  let uncertaintyData = null;
 
   // Phase 6 Treatment State
   let includeSimulatedTreatment = false;
@@ -1605,9 +1607,12 @@ export async function initApp() {
           const edtStr = Number.isFinite(b.edt) ? b.edt.toFixed(3) : '—';
           const r2Str = Number.isFinite(b.r2) ? b.r2.toFixed(3) : '—';
           const usedStr = b.used || 'none';
-          const unc = typicalUncertaintyPct[fc] || 5;
+          const uncInfo = b.rt60 != null
+            ? interpolateUncertainty(b.rt60, fc, uncertaintyData)
+            : null;
+          const uncText = uncInfo ? `(${uncInfo.displayText})` : `(typical scatter ±${typicalUncertaintyPct[fc] || 5}%)`;
           const rt60Str = b.rt60 != null
-            ? `<strong>${b.rt60.toFixed(3)} s</strong> <small class="text-muted">(typical scatter ±${unc}%)</small>`
+            ? `<strong>${b.rt60.toFixed(3)} s</strong> <small class="text-muted">${uncText}</small>`
             : '—';
           tr.innerHTML = `
             <td><strong>${fc} Hz</strong></td>
@@ -2107,9 +2112,10 @@ export async function initApp() {
         let plainDisplay = '<span class="text-muted">No recommendation</span>';
 
         if (bData.hasData) {
-          const unc = typicalUncertaintyPct[band] || 5;
+          const uncInfo = interpolateUncertainty(bData.mean, band, uncertaintyData);
+          const uncText = uncInfo ? `(${uncInfo.displayText})` : `(typical scatter ±${typicalUncertaintyPct[band] || 5}%)`;
           const spreadStr = bData.spread > 0 ? ` [${bData.min.toFixed(2)}–${bData.max.toFixed(2)}]` : '';
-          measuredDisplay = `<strong>${bData.mean.toFixed(2)} s</strong>${spreadStr} <small class="text-muted" style="font-size:0.85em;">(typical scatter ±${unc}%)</small>`;
+          measuredDisplay = `<strong>${bData.mean.toFixed(2)} s</strong>${spreadStr} <small class="text-muted" style="font-size:0.85em;">${uncText}</small>`;
           if (bData.hasApproximate) {
             measuredDisplay += ` <span class="badge badge-approx" title="Band contains approximate-tier measurement">≈ approx</span>`;
           }
@@ -2237,6 +2243,7 @@ export async function initApp() {
       }
       if (uRes && uRes.ok) {
         const uData = await uRes.json();
+        uncertaintyData = uData;
         if (uData.typicalTwoSigmaPct) {
           typicalUncertaintyPct = { ...DEFAULT_UNCERTAINTY_PCT, ...uData.typicalTwoSigmaPct };
         }
