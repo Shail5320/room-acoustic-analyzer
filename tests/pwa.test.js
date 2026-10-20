@@ -180,6 +180,7 @@ test('Phase 1 - Subpath HTTP server integration test', async () => {
     `http://127.0.0.1:${port}/room-acoustic-analyzer/icons/icon-512.png`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/data/targets.json`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/data/materials.json`,
+    `http://127.0.0.1:${port}/room-acoustic-analyzer/src/data/uncertainty.json`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/coordinates.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/session-model.js`,
     `http://127.0.0.1:${port}/room-acoustic-analyzer/src/ui/floorplan.js`,

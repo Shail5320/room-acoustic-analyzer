@@ -137,6 +137,43 @@ test('Phase 6 - Session aggregation rules: tier filtering, fake exclusion, and d
   assert.match(realOnly.dataStatus.statusLine, /2 real points:\s*\d+\s*valid,\s*\d+\s*approximate/);
 });
 
+test('Phase 3a-2c - Low-confidence measurements are excluded by default and only included via explicit toggle', () => {
+  const measurementsWithLowConf = [
+    {
+      id: 1,
+      status: 'measured',
+      lowConfidence: false,
+      bands: {
+        500: { tier: 'valid', rt60: 1.0, used: 'T30' },
+      },
+    },
+    {
+      id: 2,
+      status: 'measured',
+      lowConfidence: true,
+      bands: {
+        500: { tier: 'approximate', rt60: 1.5, used: 'T20' },
+      },
+    },
+  ];
+
+  // Default: lowConfidence: true is EXCLUDED
+  const defaultAgg = aggregateSessionBands(measurementsWithLowConf);
+  assert.equal(defaultAgg.dataStatus.lowConfidenceCount, 1);
+  assert.equal(defaultAgg.dataStatus.hasLowConfidence, true);
+  assert.equal(defaultAgg.dataStatus.includedCount, 1);
+  assert.equal(defaultAgg.bands[500].count, 1);
+  assert.equal(defaultAgg.bands[500].mean, 1.0);
+  assert.match(defaultAgg.dataStatus.statusLine, /1 low-confidence excluded/);
+
+  // Explicit opt-in: includeLowConfidence: true
+  const includedAgg = aggregateSessionBands(measurementsWithLowConf, { includeLowConfidence: true });
+  assert.equal(includedAgg.dataStatus.includedCount, 2);
+  assert.equal(includedAgg.bands[500].count, 2);
+  assert.equal(includedAgg.bands[500].mean, 1.25);
+  assert.match(includedAgg.dataStatus.statusLine, /1 low-confidence included/);
+});
+
 test('Phase 6 - Primary ratio math and plain-language readings', () => {
   // Target met (<= 1.0)
   const met = formatPrimaryRatio(0.38, 0.40);

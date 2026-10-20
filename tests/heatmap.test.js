@@ -226,6 +226,47 @@ test('Heatmap Math - Invalid, pending, and fake handling with strict metric sele
   assert.equal(formatBandTierCounts(counts), '2 valid, 1 approximate, 1 invalid');
 });
 
+test('Heatmap Math - Low-confidence measurements excluded by default and included with explicit option', () => {
+  const points = [
+    {
+      id: 1,
+      x: 0.2,
+      y: 0.2,
+      status: 'measured',
+      lowConfidence: false,
+      bands: { 500: { tier: 'valid', t30: 0.8, rt60: 0.8, used: 'T30' } },
+    },
+    {
+      id: 2,
+      x: 0.8,
+      y: 0.2,
+      status: 'measured',
+      lowConfidence: true,
+      bands: { 500: { tier: 'approximate', t20: 1.2, rt60: 1.2, used: 'T20' } },
+    },
+  ];
+
+  // Default: excluded
+  const usableDefault = getUsablePoints(points, 500);
+  assert.equal(usableDefault.length, 1);
+  assert.equal(usableDefault[0].id, 1);
+
+  const countsDefault = getBandTierCounts(points, 500);
+  assert.equal(countsDefault.valid, 1);
+  assert.equal(countsDefault.approximate, 0);
+  assert.equal(countsDefault.usable, 1);
+
+  // Opted in: included
+  const usableIncluded = getUsablePoints(points, 500, { includeLowConfidence: true });
+  assert.equal(usableIncluded.length, 2);
+  assert.deepEqual(usableIncluded.map((p) => p.id), [1, 2]);
+
+  const countsIncluded = getBandTierCounts(points, 500, { includeLowConfidence: true });
+  assert.equal(countsIncluded.valid, 1);
+  assert.equal(countsIncluded.approximate, 1);
+  assert.equal(countsIncluded.usable, 2);
+});
+
 test('Heatmap Math - Fewer-than-4 rule triggers honest messaging and unreliability flag', () => {
   // 3 usable points
   const threePoints = [

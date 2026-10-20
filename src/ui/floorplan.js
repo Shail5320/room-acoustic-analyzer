@@ -77,6 +77,11 @@ export class FloorPlanView {
     this.render();
   }
 
+  setHeatmapIncludeLowConfidence(enabled) {
+    this.heatmapRenderer.setIncludeLowConfidence(enabled);
+    this.render();
+  }
+
   getHeatmapStatus() {
     return this.lastHeatmapStatus;
   }

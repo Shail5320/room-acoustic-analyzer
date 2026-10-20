@@ -120,7 +120,9 @@ export async function initApp() {
   // DOM Elements - Heatmap Panel & Legend
   const heatmapCard = document.getElementById('heatmap-card');
   const heatmapDevBanner = document.getElementById('heatmap-dev-banner');
+  const heatmapLowConfidenceBanner = document.getElementById('heatmap-low-confidence-banner');
   const heatmapUnreliableBanner = document.getElementById('heatmap-unreliable-banner');
+  const checkHeatmapIncludeLowConfidence = document.getElementById('check-heatmap-include-low-confidence');
   const markerDetailCard = document.getElementById('marker-detail-card');
   const markerDetailTitle = document.getElementById('marker-detail-title');
   const markerDetailBody = document.getElementById('marker-detail-body');
@@ -179,6 +181,8 @@ export async function initApp() {
   const treatmentDataStatusEl = document.getElementById('treatment-data-status');
   const checkIncludeSimulated = document.getElementById('check-include-simulated');
   const treatmentSimulatedBanner = document.getElementById('treatment-simulated-banner');
+  const checkIncludeLowConfidence = document.getElementById('check-include-low-confidence');
+  const treatmentLowConfidenceBanner = document.getElementById('treatment-low-confidence-banner');
   const selectTargetPreset = document.getElementById('select-target-preset');
   const btnTargetModePreset = document.getElementById('btn-target-mode-preset');
   const btnTargetModeManual = document.getElementById('btn-target-mode-manual');
@@ -219,8 +223,21 @@ export async function initApp() {
   let currentAudioContext = null;
   let lastLoadedAudio = null;
 
+  // Uncertainty & Scatter by Octave Band (Derived from 30-seed Monte Carlo Study)
+  const DEFAULT_UNCERTAINTY_PCT = {
+    125: 11,
+    250: 8,
+    500: 6,
+    1000: 4,
+    2000: 3,
+    4000: 2,
+  };
+  let typicalUncertaintyPct = { ...DEFAULT_UNCERTAINTY_PCT };
+
   // Phase 6 Treatment State
   let includeSimulatedTreatment = false;
+  let includeLowConfidenceTreatment = false;
+  let includeLowConfidenceHeatmap = false;
   let targetMode = 'preset'; // 'preset' | 'manual'
   let selectedPresetId = 'small_control_room';
   let manualTargetAll = 0.40;
@@ -638,6 +655,16 @@ export async function initApp() {
     });
   }
 
+  if (checkHeatmapIncludeLowConfidence) {
+    checkHeatmapIncludeLowConfidence.addEventListener('change', () => {
+      includeLowConfidenceHeatmap = checkHeatmapIncludeLowConfidence.checked;
+      view.setHeatmapIncludeLowConfidence(includeLowConfidenceHeatmap);
+      updateHeatmapUI();
+      updateBandSelectorUI(model.activeBand);
+      render();
+    });
+  }
+
   if (btnCloseMarkerDetail) {
     btnCloseMarkerDetail.addEventListener('click', () => {
       model.selectPoint(null);
@@ -646,7 +673,9 @@ export async function initApp() {
 
   function updateHeatmapUI() {
     const activeBand = model.activeBand;
-    const usablePoints = getUsablePoints(model.measurements, activeBand);
+    const usablePoints = getUsablePoints(model.measurements, activeBand, {
+      includeLowConfidence: includeLowConfidenceHeatmap,
+    });
     const range = computeHeatmapRange(usablePoints, heatmapRangeMode);
     const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 
@@ -665,6 +694,12 @@ export async function initApp() {
     const hasFake = usablePoints.some((p) => p.fake === true || p.simulated === true || p.source === 'selftest' || p.source === 'dev');
     if (heatmapDevBanner) {
       heatmapDevBanner.hidden = !hasFake;
+    }
+
+    // LOW CONFIDENCE DATA banner
+    const hasLowConf = usablePoints.some((p) => p.lowConfidence === true);
+    if (heatmapLowConfidenceBanner) {
+      heatmapLowConfidenceBanner.hidden = !(includeLowConfidenceHeatmap && hasLowConf);
     }
 
     // Hotspot Placement Hint Caption
@@ -720,6 +755,7 @@ export async function initApp() {
               <span class="marker-detail-label">Metric Used</span>
               <span class="marker-detail-val">${bandInfo.metric || 'none'}</span>
             </div>
+            ${m.lowConfidence ? `<div class="marker-detail-item"><span class="marker-detail-label">Confidence</span><span class="marker-detail-val"><span class="badge badge-warning">LOW CONFIDENCE</span></span></div>` : ''}
             ${m.fake || m.simulated ? `<div class="marker-detail-item"><span class="marker-detail-label">Source</span><span class="marker-detail-val" style="color: #ea580c; font-weight:700;">${m.source === 'selftest' ? 'SIMULATED' : 'Simulated [DEV]'}</span></div>` : (m.source ? `<div class="marker-detail-item"><span class="marker-detail-label">Source</span><span class="marker-detail-val">${m.source}${m.originalSampleRate ? ' (' + m.originalSampleRate + ' Hz)' : ''}</span></div>` : '')}
           `;
           markerDetailCard.hidden = false;
@@ -749,7 +785,9 @@ export async function initApp() {
     const buttons = bandSelectorContainer.querySelectorAll('button[data-band]');
     buttons.forEach((btn) => {
       const b = Number(btn.getAttribute('data-band'));
-      const counts = getBandTierCounts(model.measurements, b);
+      const counts = getBandTierCounts(model.measurements, b, {
+        includeLowConfidence: includeLowConfidenceHeatmap,
+      });
       btn.title = `${b} Hz: ${formatBandTierCounts(counts)}`;
       if (b === activeBand) {
         btn.classList.add('active');
@@ -761,7 +799,9 @@ export async function initApp() {
     });
 
     if (bandTierSummaryEl) {
-      const currentCounts = getBandTierCounts(model.measurements, activeBand);
+      const currentCounts = getBandTierCounts(model.measurements, activeBand, {
+        includeLowConfidence: includeLowConfidenceHeatmap,
+      });
       bandTierSummaryEl.textContent = `${activeBand} Hz: ${formatBandTierCounts(currentCounts)}`;
     }
   }
@@ -1557,7 +1597,7 @@ export async function initApp() {
         const b = result.bands ? result.bands[fc] : null;
         const tr = document.createElement('tr');
         if (!b) {
-          tr.innerHTML = `<td><strong>${fc} Hz</strong></td><td colspan="6">—</td>`;
+          tr.innerHTML = `<td><strong>${fc} Hz</strong></td><td colspan="7">—</td>`;
         } else {
           const tierBadge = `<span class="badge tier-${b.tier}">${b.tier}</span>`;
           const t20Str = Number.isFinite(b.t20) ? b.t20.toFixed(3) : '—';
@@ -1565,8 +1605,13 @@ export async function initApp() {
           const edtStr = Number.isFinite(b.edt) ? b.edt.toFixed(3) : '—';
           const r2Str = Number.isFinite(b.r2) ? b.r2.toFixed(3) : '—';
           const usedStr = b.used || 'none';
+          const unc = typicalUncertaintyPct[fc] || 5;
+          const rt60Str = b.rt60 != null
+            ? `<strong>${b.rt60.toFixed(3)} s</strong> <small class="text-muted">(typical scatter ±${unc}%)</small>`
+            : '—';
           tr.innerHTML = `
             <td><strong>${fc} Hz</strong></td>
+            <td>${rt60Str}</td>
             <td>${t20Str}</td>
             <td>${t30Str}</td>
             <td>${edtStr}</td>
@@ -1948,13 +1993,30 @@ export async function initApp() {
     });
   }
 
+  // Include low-confidence data toggle
+  if (checkIncludeLowConfidence) {
+    checkIncludeLowConfidence.addEventListener('change', () => {
+      includeLowConfidenceTreatment = checkIncludeLowConfidence.checked;
+      if (treatmentLowConfidenceBanner) {
+        treatmentLowConfidenceBanner.hidden = !includeLowConfidenceTreatment;
+      }
+      updateTreatmentUI();
+    });
+  }
+
   function updateTreatmentUI() {
-    const agg = aggregateSessionBands(model.measurements, { includeSimulated: includeSimulatedTreatment });
+    const agg = aggregateSessionBands(model.measurements, {
+      includeSimulated: includeSimulatedTreatment,
+      includeLowConfidence: includeLowConfidenceTreatment,
+    });
     if (treatmentDataStatusEl) {
       treatmentDataStatusEl.textContent = agg.dataStatus.statusLine;
     }
     if (treatmentSimulatedBanner) {
       treatmentSimulatedBanner.hidden = !includeSimulatedTreatment;
+    }
+    if (treatmentLowConfidenceBanner) {
+      treatmentLowConfidenceBanner.hidden = !includeLowConfidenceTreatment;
     }
 
     // Determine current material
@@ -2045,8 +2107,9 @@ export async function initApp() {
         let plainDisplay = '<span class="text-muted">No recommendation</span>';
 
         if (bData.hasData) {
+          const unc = typicalUncertaintyPct[band] || 5;
           const spreadStr = bData.spread > 0 ? ` [${bData.min.toFixed(2)}–${bData.max.toFixed(2)}]` : '';
-          measuredDisplay = `<strong>${bData.mean.toFixed(2)} s</strong>${spreadStr}`;
+          measuredDisplay = `<strong>${bData.mean.toFixed(2)} s</strong>${spreadStr} <small class="text-muted" style="font-size:0.85em;">(typical scatter ±${unc}%)</small>`;
           if (bData.hasApproximate) {
             measuredDisplay += ` <span class="badge badge-approx" title="Band contains approximate-tier measurement">≈ approx</span>`;
           }
@@ -2155,20 +2218,27 @@ export async function initApp() {
   // Load external JSON presets with fallbacks
   async function loadDataFiles() {
     try {
-      const [tRes, mRes] = await Promise.all([
+      const [tRes, mRes, uRes] = await Promise.all([
         fetch('./src/data/targets.json'),
         fetch('./src/data/materials.json'),
+        fetch('./src/data/uncertainty.json'),
       ]);
-      if (tRes.ok) {
+      if (tRes && tRes.ok) {
         const tData = await tRes.json();
         if (tData.presets && tData.presets.length > 0) {
           targetPresets = tData.presets;
         }
       }
-      if (mRes.ok) {
+      if (mRes && mRes.ok) {
         const mData = await mRes.json();
         if (mData.materials && mData.materials.length > 0) {
           materialsList = mData.materials;
+        }
+      }
+      if (uRes && uRes.ok) {
+        const uData = await uRes.json();
+        if (uData.typicalTwoSigmaPct) {
+          typicalUncertaintyPct = { ...DEFAULT_UNCERTAINTY_PCT, ...uData.typicalTwoSigmaPct };
         }
       }
     } catch (e) {

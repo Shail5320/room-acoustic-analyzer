@@ -98,6 +98,7 @@ export function extractUsablePointBand(point, band) {
  * @param {Array<object>} measurements
  * @param {object} [options]
  * @param {boolean} [options.includeSimulated=false]
+ * @param {boolean} [options.includeLowConfidence=false]
  * @returns {{
  *   bands: Record<number, {
  *     hasData: boolean,
@@ -115,33 +116,49 @@ export function extractUsablePointBand(point, band) {
  *   dataStatus: {
  *     realCount: number,
  *     simulatedCount: number,
+ *     lowConfidenceCount: number,
  *     includedCount: number,
  *     hasSimulated: boolean,
+ *     hasLowConfidence: boolean,
+ *     includeSimulated: boolean,
+ *     includeLowConfidence: boolean,
  *     statusLine: string
  *   }
  * }}
  */
 export function aggregateSessionBands(measurements = [], options = {}) {
   const includeSimulated = Boolean(options.includeSimulated);
+  const includeLowConfidence = Boolean(options.includeLowConfidence);
   const mList = Array.isArray(measurements) ? measurements : [];
 
   let realCount = 0;
   let simulatedCount = 0;
+  let lowConfidenceCount = 0;
 
   // Filter candidate points
   const candidatePoints = [];
   for (const m of mList) {
     if (m.status !== 'measured') continue;
     const isSim = Boolean(m.fake || m.simulated || m.source === 'dev');
+    const isLowConf = Boolean(m.lowConfidence);
+
+    if (isLowConf) {
+      lowConfidenceCount++;
+    }
+
     if (isSim) {
       simulatedCount++;
     } else {
       realCount++;
     }
 
-    if (!isSim || includeSimulated) {
-      candidatePoints.push({ point: m, isSim });
-    }
+    // Default exclusions:
+    // 1. Simulated measurements excluded unless explicitly toggled
+    if (isSim && !includeSimulated) continue;
+    // 2. Low-confidence measurements excluded unless explicitly toggled
+    if (isLowConf && !includeLowConfidence) continue;
+
+    candidatePoints.push({ point: m, isSim, isLowConf });
   }
 
   const bands = {};
@@ -207,17 +224,25 @@ export function aggregateSessionBands(measurements = [], options = {}) {
   }
 
   // Build honest data status line
-  const activeCount = includeSimulated ? realCount + simulatedCount : realCount;
-  const statusLine = `${realCount} real points: ${totalValidAcrossBands} valid, ${totalApproxAcrossBands} approximate`;
+  const activeCount = candidatePoints.length;
+  let statusLine = `${realCount} real points: ${totalValidAcrossBands} valid, ${totalApproxAcrossBands} approximate`;
+  if (!includeLowConfidence && lowConfidenceCount > 0) {
+    statusLine += ` (${lowConfidenceCount} low-confidence excluded)`;
+  } else if (includeLowConfidence && lowConfidenceCount > 0) {
+    statusLine += ` (${lowConfidenceCount} low-confidence included)`;
+  }
 
   return {
     bands,
     dataStatus: {
       realCount,
       simulatedCount,
+      lowConfidenceCount,
       includedCount: activeCount,
       hasSimulated: simulatedCount > 0,
+      hasLowConfidence: lowConfidenceCount > 0,
       includeSimulated,
+      includeLowConfidence,
       statusLine,
     },
   };

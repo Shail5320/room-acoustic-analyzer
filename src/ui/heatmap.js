@@ -41,12 +41,21 @@ export class HeatmapRenderer {
   constructor() {
     this.rangeMode = 'auto'; // 'auto' | 'fixed'
     this.placementHint = false;
+    this.includeLowConfidence = false;
     this._offscreenCanvas = null;
     this._offscreenCtx = null;
     this._cacheKey = null;
     this._cachedGrid = null;
     this._cachedRange = null;
     this._cachedHotspot = null;
+  }
+
+  setIncludeLowConfidence(enabled) {
+    const val = Boolean(enabled);
+    if (this.includeLowConfidence !== val) {
+      this.includeLowConfidence = val;
+      this.invalidateCache();
+    }
   }
 
   setPlacementHint(enabled) {
@@ -78,15 +87,15 @@ export class HeatmapRenderer {
    */
   _buildCacheKey(model, band, aspectRatio) {
     const measurements = model.measurements || [];
-    // Hash key from band, count, aspect ratio, range mode, placement hint, and measurement values
+    // Hash key from band, count, aspect ratio, range mode, placement hint, lowConfidence, and measurement values
     const ptsHash = measurements
       .map((m) => {
         const b = m.bands && m.bands[band];
-        return `${m.id}:${m.status}:${m.x.toFixed(3)},${m.y.toFixed(3)}:${b ? b.tier + (b.rt60 || '') : 'none'}`;
+        return `${m.id}:${m.status}:${m.lowConfidence ? 'lowConf:' : ''}${m.x.toFixed(3)},${m.y.toFixed(3)}:${b ? b.tier + (b.rt60 || '') : 'none'}`;
       })
       .join('|');
 
-    return `${band}@${aspectRatio.toFixed(3)}@${this.rangeMode}@hint:${this.placementHint}@${ptsHash}`;
+    return `${band}@${aspectRatio.toFixed(3)}@${this.rangeMode}@hint:${this.placementHint}@lowConf:${this.includeLowConfidence}@${ptsHash}`;
   }
 
   /**
@@ -171,7 +180,9 @@ export class HeatmapRenderer {
 
     const band = model.activeBand || 500;
     const aspectRatio = model.parsedAspectRatio || 4 / 3;
-    const usablePoints = getUsablePoints(model.measurements, band);
+    const usablePoints = getUsablePoints(model.measurements, band, {
+      includeLowConfidence: this.includeLowConfidence,
+    });
     const range = computeHeatmapRange(usablePoints, this.rangeMode);
     const isReliable = usablePoints.length >= MIN_USABLE_HEATMAP_POINTS;
     const hasFake = usablePoints.some((p) => p.fake === true);

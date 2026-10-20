@@ -1,0 +1,69 @@
+{
+  "study": {
+    "name": "30-Seed Monte Carlo RT60 Recovery and Uncertainty Study",
+    "seedCount": 30,
+    "targets": [0.3, 0.6, 0.8, 1.2, 1.5],
+    "sampleRate": 48000,
+    "description": "Empirical uncertainty derived from a 30-seed Monte Carlo simulation across 5 RT60 targets (0.3s, 0.6s, 0.8s, 1.2s, 1.5s; 150 total runs) using mulberry32 PRNG and Box-Muller Gaussian room impulse response synthesis convolved with an exponential sine sweep (50-8000 Hz) at 48 kHz. Reflects stochastic sampling scatter in Schroeder backward integration under clean synthetic conditions.",
+    "disclaimer": "Valid refers to usable decay depth, not accuracy; short rooms and low bands scatter more.",
+    "caveat125Hz": "125 Hz at short RT60 can be off by 20% even when valid."
+  },
+  "typicalTwoSigmaPct": {
+    "125": 11,
+    "250": 8,
+    "500": 6,
+    "1000": 4,
+    "2000": 3,
+    "4000": 2
+  },
+  "typicalTwoSigmaExact": {
+    "125": 10.5,
+    "250": 8.1,
+    "500": 5.9,
+    "1000": 3.7,
+    "2000": 3.0,
+    "4000": 2.3
+  },
+  "byTarget": {
+    "0.3": {
+      "125": { "meanErrPct": 4.11, "stdErrPct": 8.92, "twoSigmaPct": 17.84, "semPct": 1.63 },
+      "250": { "meanErrPct": 0.71, "stdErrPct": 6.69, "twoSigmaPct": 13.39, "semPct": 1.22 },
+      "500": { "meanErrPct": 0.54, "stdErrPct": 4.43, "twoSigmaPct": 8.87, "semPct": 0.81 },
+      "1000": { "meanErrPct": 0.74, "stdErrPct": 2.98, "twoSigmaPct": 5.96, "semPct": 0.54 },
+      "2000": { "meanErrPct": -0.03, "stdErrPct": 2.63, "twoSigmaPct": 5.26, "semPct": 0.48 },
+      "4000": { "meanErrPct": 0.48, "stdErrPct": 1.39, "twoSigmaPct": 2.79, "semPct": 0.25 }
+    },
+    "0.6": {
+      "125": { "meanErrPct": 3.65, "stdErrPct": 4.76, "twoSigmaPct": 9.52, "semPct": 0.87 },
+      "250": { "meanErrPct": 1.36, "stdErrPct": 4.88, "twoSigmaPct": 9.76, "semPct": 0.89 },
+      "500": { "meanErrPct": 1.35, "stdErrPct": 3.15, "twoSigmaPct": 6.30, "semPct": 0.57 },
+      "1000": { "meanErrPct": -0.07, "stdErrPct": 1.98, "twoSigmaPct": 3.97, "semPct": 0.36 },
+      "2000": { "meanErrPct": 0.46, "stdErrPct": 1.54, "twoSigmaPct": 3.07, "semPct": 0.28 },
+      "4000": { "meanErrPct": -0.25, "stdErrPct": 1.47, "twoSigmaPct": 2.95, "semPct": 0.27 }
+    },
+    "0.8": {
+      "125": { "meanErrPct": 2.37, "stdErrPct": 4.51, "twoSigmaPct": 9.03, "semPct": 0.82 },
+      "250": { "meanErrPct": 0.74, "stdErrPct": 3.56, "twoSigmaPct": 7.12, "semPct": 0.65 },
+      "500": { "meanErrPct": 0.76, "stdErrPct": 2.97, "twoSigmaPct": 5.94, "semPct": 0.54 },
+      "1000": { "meanErrPct": 0.18, "stdErrPct": 1.60, "twoSigmaPct": 3.19, "semPct": 0.29 },
+      "2000": { "meanErrPct": 0.32, "stdErrPct": 1.44, "twoSigmaPct": 2.88, "semPct": 0.26 },
+      "4000": { "meanErrPct": -0.17, "stdErrPct": 1.40, "twoSigmaPct": 2.81, "semPct": 0.26 }
+    },
+    "1.2": {
+      "125": { "meanErrPct": 1.23, "stdErrPct": 3.93, "twoSigmaPct": 7.86, "semPct": 0.72 },
+      "250": { "meanErrPct": -0.26, "stdErrPct": 2.81, "twoSigmaPct": 5.62, "semPct": 0.51 },
+      "500": { "meanErrPct": -0.01, "stdErrPct": 2.06, "twoSigmaPct": 4.11, "semPct": 0.38 },
+      "1000": { "meanErrPct": 0.20, "stdErrPct": 1.39, "twoSigmaPct": 2.77, "semPct": 0.25 },
+      "2000": { "meanErrPct": 0.31, "stdErrPct": 0.92, "twoSigmaPct": 1.84, "semPct": 0.17 },
+      "4000": { "meanErrPct": 0.05, "stdErrPct": 0.82, "twoSigmaPct": 1.64, "semPct": 0.15 }
+    },
+    "1.5": {
+      "125": { "meanErrPct": 0.61, "stdErrPct": 4.07, "twoSigmaPct": 8.14, "semPct": 0.74 },
+      "250": { "meanErrPct": -0.13, "stdErrPct": 2.40, "twoSigmaPct": 4.80, "semPct": 0.44 },
+      "500": { "meanErrPct": -0.84, "stdErrPct": 2.03, "twoSigmaPct": 4.06, "semPct": 0.37 },
+      "1000": { "meanErrPct": 0.09, "stdErrPct": 1.32, "twoSigmaPct": 2.64, "semPct": 0.24 },
+      "2000": { "meanErrPct": 0.08, "stdErrPct": 0.94, "twoSigmaPct": 1.88, "semPct": 0.17 },
+      "4000": { "meanErrPct": 0.04, "stdErrPct": 0.60, "twoSigmaPct": 1.20, "semPct": 0.11 }
+    }
+  }
+}

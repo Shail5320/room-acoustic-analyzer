@@ -195,13 +195,17 @@ export function extractPointBandValue(measurement, band) {
  *
  * @param {Array<object>} measurements
  * @param {number|string} band
- * @returns {Array<{ id: number, x: number, y: number, value: number, metric: string, tier: string, fake: boolean }>}
+ * @param {object} [options]
+ * @param {boolean} [options.includeLowConfidence=false]
+ * @returns {Array<{ id: number, x: number, y: number, value: number, metric: string, tier: string, fake: boolean, lowConfidence: boolean }>}
  */
-export function getUsablePoints(measurements, band) {
+export function getUsablePoints(measurements, band, options = {}) {
+  const includeLowConfidence = Boolean(options && options.includeLowConfidence);
   if (!Array.isArray(measurements)) return [];
 
   const usable = [];
   for (const m of measurements) {
+    if (m.lowConfidence && !includeLowConfidence) continue;
     const res = extractPointBandValue(m, band);
     if (res.usable && Number.isFinite(m.x) && Number.isFinite(m.y)) {
       usable.push({
@@ -212,6 +216,7 @@ export function getUsablePoints(measurements, band) {
         metric: res.metric,
         tier: res.tier,
         fake: Boolean(m.fake),
+        lowConfidence: Boolean(m.lowConfidence),
       });
     }
   }
@@ -224,9 +229,12 @@ export function getUsablePoints(measurements, band) {
  *
  * @param {Array<object>} measurements
  * @param {number|string} band
+ * @param {object} [options]
+ * @param {boolean} [options.includeLowConfidence=false]
  * @returns {{ valid: number, approximate: number, invalid: number, pending: number, usable: number, total: number }}
  */
-export function getBandTierCounts(measurements, band) {
+export function getBandTierCounts(measurements, band, options = {}) {
+  const includeLowConfidence = Boolean(options && options.includeLowConfidence);
   let valid = 0;
   let approximate = 0;
   let invalid = 0;
@@ -237,6 +245,7 @@ export function getBandTierCounts(measurements, band) {
   }
 
   for (const m of measurements) {
+    if (m.lowConfidence && !includeLowConfidence) continue;
     if (m.status === 'pending') {
       pending++;
       continue;

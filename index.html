@@ -402,6 +402,7 @@
               <thead>
                 <tr>
                   <th>Band</th>
+                  <th>RT60 (s)</th>
                   <th>T20 (s)</th>
                   <th>T30 (s)</th>
                   <th>EDT (s)</th>
@@ -412,6 +413,9 @@
               </thead>
               <tbody id="analyze-bands-tbody"></tbody>
             </table>
+            <p class="table-disclaimer" style="font-size: 0.85em; color: var(--text-muted, #94a3b8); margin-top: 8px;">
+              Valid refers to usable decay depth, not accuracy; short rooms and low bands scatter more. Note that 125 Hz at short RT60 can be off by 20% even when valid.
+            </p>
           </div>
 
           <!-- Attach to Floor Plan Point Controls -->
@@ -432,6 +436,10 @@
       <section id="heatmap-card" class="card heatmap-card" hidden>
         <div id="heatmap-dev-banner" class="heatmap-dev-banner" hidden>
           ⚠️ SIMULATED / DEV DATA — contains simulated test measurements
+        </div>
+
+        <div id="heatmap-low-confidence-banner" class="fake-warning-banner" hidden>
+          ⚠️ LOW CONFIDENCE DATA INCLUDED — Heatmap includes low-confidence measurements.
         </div>
 
         <div id="heatmap-unreliable-banner" class="heatmap-unreliable-banner" hidden>
@@ -456,9 +464,14 @@
           <button id="btn-toggle-hotspot" class="btn btn-secondary btn-sm" type="button" aria-pressed="false">
             🎯 Placement Hint
           </button>
+          <label class="toggle-label" for="check-heatmap-include-low-confidence">
+            <input type="checkbox" id="check-heatmap-include-low-confidence" />
+            <span>Include low-conf</span>
+          </label>
           <div class="marker-legend">
             <span class="legend-item"><span class="legend-symbol symbol-valid"></span> Valid</span>
             <span class="legend-item"><span class="legend-symbol symbol-approx"></span> Approx (≈)</span>
+            <span class="legend-item"><span class="badge badge-warning" style="font-size:0.7em; padding: 2px 4px;">Low Conf</span> Low Conf</span>
             <span class="legend-item"><span class="legend-symbol symbol-source"></span> Source</span>
           </div>
         </div>
@@ -489,10 +502,18 @@
             <input type="checkbox" id="check-include-simulated" />
             <span>Include simulated & dev data</span>
           </label>
+          <label class="toggle-label" for="check-include-low-confidence">
+            <input type="checkbox" id="check-include-low-confidence" />
+            <span>Include low-confidence data</span>
+          </label>
         </div>
 
         <div id="treatment-simulated-banner" class="fake-warning-banner" hidden>
           ⚠️ SIMULATED / DEV DATA INCLUDED — Results include simulated or test measurements.
+        </div>
+
+        <div id="treatment-low-confidence-banner" class="fake-warning-banner" hidden>
+          ⚠️ LOW CONFIDENCE DATA INCLUDED — Results include measurements taken under poor SNR conditions.
         </div>
 
         <!-- Target RT60 Section -->
@@ -673,6 +694,9 @@
               </thead>
               <tbody id="treatment-primary-tbody"></tbody>
             </table>
+            <p class="treatment-uncertainty-note" style="font-size: 0.85em; color: var(--text-muted, #94a3b8); margin-top: 8px;">
+              Valid refers to usable decay depth, not accuracy; short rooms and low bands scatter more. Note that 125 Hz at short RT60 can be off by 20% even when valid.
+            </p>
           </div>
         </div>
 

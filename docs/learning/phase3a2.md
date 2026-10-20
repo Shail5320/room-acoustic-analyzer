@@ -168,7 +168,7 @@ which comfortably passes EchoMap's strict quantization tolerance ($3.1 \times 10
 
 ---
 
-### Question 3: Under what acoustic conditions does a recording yield a PNR between 10.0 dB and 20.0 dB, and why does EchoMap require a post-peak energy verification before allowing the user to override rejection?
+### Question 3: Under what acoustic conditions does a recording yield a PNR between 10.0 dB and 20.0 dB, what is the effective override operating band, and why must rejection override remain strictly guarded?
 
 **Answer:**
 Peak-to-Noise Ratio (PNR) measures the difference between the direct sound arrival peak and the root-mean-square (RMS) energy of ambient noise measured prior to the sweep arrival:
@@ -177,12 +177,43 @@ $$\text{PNR} = 20 \log_{10} \left( \frac{|h_{\text{peak}}|}{\text{RMS}(h_{\text{
 
 In EchoMap, recordings with $\text{PNR} < 20.0$ dB are normally rejected because noise-floor contamination can bias Schroeder backward integration. However, in noisy real-world environments (such as an open public space or a classroom near ventilation ducts), a genuine sweep may be detected with a marginal PNR between 10.0 dB and 20.0 dB.
 
-Crucially, **pure random noise** (a recording of ambient room noise containing no sweep at all) when deconvolved with an inverse sweep produces pseudo-random correlation artifacts that naturally yield a false PNR of approximately $14 \text{ to } 16$ dB. If EchoMap allowed a blind override for any signal with $\text{PNR} \ge 10.0$ dB, users recording pure silence or HVAC noise could override the rejection and generate completely fake RT60 values.
+#### The Effective Override Band (~14 to 20 dB PNR):
+While the architecture nominally permits override evaluation when $\text{PNR} \ge 10.0\text{ dB}$, **the effective override operating band is approximately 14 to 20 dB PNR**. Below ~14 dB PNR, ambient noise energy swamps the 200 ms post-peak direct arrival window, causing the post-to-pre energy ratio $\Delta E_{\text{post/pre}}$ to drop below the required 1.5 dB threshold. Thus, genuine sweeps with $\text{PNR} < 14\text{ dB}$ will rarely qualify for override.
 
-To solve this, EchoMap requires a second physical condition: **the post-peak energy margin check**:
+#### The Post-Peak Energy Margin Check ($\Delta E_{\text{post/pre}} \ge 1.5\text{ dB}$):
 $$\Delta E_{\text{post/pre}} = 20 \log_{10} \left( \frac{\text{RMS}(h_{\text{post\_peak\_200ms}})}{\text{RMS}(h_{\text{noise}})} \right) \ge 1.5 \text{ dB}$$
 
-- In a **true acoustic room**, the 200 ms interval immediately following direct sound arrival contains strong early room reflections (specular reflections from floor, walls, and ceiling). Thus, $\Delta E_{\text{post/pre}}$ is high (typically $3.0 \text{ to } 12.0$ dB).
-- In **pure noise**, the detected "peak" is merely a random statistical outlier, and the subsequent 200 ms window immediately drops back to the stationary noise floor ($\Delta E_{\text{post/pre}} \approx 0.0 \text{ dB} < 1.5 \text{ dB}$).
+- **True Acoustic Room Sweeps:** The 200 ms interval immediately following direct sound arrival contains strong early room reflections (specular reflections from boundaries). Thus, $\Delta E_{\text{post/pre}}$ is high (typically $3.0 \text{ to } 12.0$ dB).
+- **Stationary White Noise Testing:** Tested across 20 independent stationary white-noise seeds, the maximum $\Delta E_{\text{post/pre}}$ observed was $0.33\text{ dB}$ (mean $\approx 0.0\text{ dB}$), maintaining a $>1.1\text{ dB}$ safety margin below the 1.5 dB threshold. Stationary Gaussian white noise did not accidentally trigger the override in any tested seed.
+- **Non-Stationary Impulsive Noise Warning:** Testing with non-stationary audio revealed an important physical edge case: a single clap-like decaying burst (with no sweep present) produces $\text{PNR} \approx 19.8\text{ dB}$ and $\Delta E_{\text{post/pre}} \approx 9.1\text{ dB}$, triggering the override offer. When forced, inverse filter deconvolution of the sudden transient generates artificial chirp tails that yield valid-looking RT60 estimates in high bands (e.g. 2 kHz = 1.24 s with $R^2 = 0.993$; 4 kHz = 1.71 s with $R^2 = 0.991$). Therefore, the low-confidence override must never be accepted blindly.
 
-Therefore, pure noise cannot be overridden, while genuine low-SNR acoustic sweeps can be overridden with a visible `"Low Confidence"` flag and validity tiers capped at `"approximate"`.
+#### Aggregation and Exclusion Policy:
+Because low-confidence measurements can introduce false or imprecise decays, EchoMap strictly enforces:
+1. **Default Exclusion:** Measurements flagged `lowConfidence: true` are completely excluded by default from the RT60 heatmap, session aggregation, hotspot placement hints, and Sabine/Eyring treatment calculations.
+2. **Explicit Opt-In Only:** Users must explicitly check an opt-in toggle to include low-confidence data, which immediately activates a persistent, high-visibility `LOW CONFIDENCE` badge across cards and banners.
+
+---
+
+### Question 4: Does the 125 Hz positive bias survive multi-seed evaluation, and is it caused by Butterworth filter ringing?
+
+**Answer:**
+1. **Bias Survival with 30 Seeds:** In a 30-seed Monte Carlo study per RT60 target (150 total simulations), the positive bias at 125 Hz **survives with statistical significance**:
+   - Target 0.3 s: Mean Error = $+4.11\%$, SEM = $1.63\%$, $95\%\text{ CI} = [+0.85\%, +7.37\%]$ ($t = 2.52, p = 0.017$).
+   - Target 0.6 s: Mean Error = $+3.65\%$, SEM = $0.87\%$, $95\%\text{ CI} = [+1.91\%, +5.39\%]$ ($t = 4.20, p < 0.001$).
+   - Target 0.8 s: Mean Error = $+2.37\%$, SEM = $0.82\%$, $95\%\text{ CI} = [+0.73\%, +4.02\%]$.
+   - At longer targets (1.2 s and 1.5 s), the 95% confidence interval spans zero, showing that the bias attenuates as RT60 increases.
+2. **Cause: Sweep Edge Truncation vs. Butterworth Ringing:**
+   - Recovering a known exponential decay (0.3 s) directly through the 125 Hz Butterworth bandpass filter without sweep deconvolution yields a mean error of only $+0.22\%$, ruling out internal Butterworth filter impulse ringing as the primary driver.
+   - Deconvolving a sweep starting at $f_1 = 50\text{ Hz}$ yields $+8.52\%$ error, whereas starting the sweep at $f_1 = 20\text{ Hz}$ reduces the error to $+1.11\%$.
+   - **Conclusion:** The positive bias at 125 Hz is primarily caused by **sweep start-frequency truncation** ($f_1 = 50\text{ Hz}$ truncates the lower filter skirt of the 125 Hz octave band, which extends down toward 44–60 Hz). Filter ringing is labeled strictly as an unproven secondary hypothesis.
+
+---
+
+## 4. References
+
+1. **Farina, A. (2000).** "Simultaneous measurement of impulse response and distortion with a swept-sine technique." *108th Audio Engineering Society Convention*, Paris, France.
+2. **Schroeder, M. R. (1965).** "New Method of Measuring Reverberation Time." *The Journal of the Acoustical Society of America*, 37(3), 409–412.
+3. **ISO 3382-1:2009.** "Acoustics — Measurement of room acoustic parameters — Part 1: Performance spaces." International Organization for Standardization, Geneva, Switzerland.
+4. **ISO 3382-2:2008.** "Acoustics — Measurement of room acoustic parameters — Part 2: Reverberation time in ordinary rooms." International Organization for Standardization, Geneva, Switzerland.
+5. **Sabine, W. C. (1922).** *Collected Papers on Acoustics*. Harvard University Press, Cambridge, MA.
+6. **Eyring, C. F. (1930).** "Reverberation Time in 'Dead' Rooms." *The Journal of the Acoustical Society of America*, 1(2), 217–241.

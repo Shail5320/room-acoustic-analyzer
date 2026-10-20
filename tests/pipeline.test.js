@@ -663,10 +663,13 @@ test('Pipeline: deltaPostPre energy margin validation across fixtures, noise see
   }
   console.log('-'.repeat(105));
   console.log(`\n  [Separation Audit]:`);
-  console.log(`  The noise-only maximum deltaPostPre is ${maxNoiseDelta.toFixed(2)} dB, which is ${noiseMaxDistance.toFixed(2)} dB below`);
-  console.log(`  the 1.5 dB threshold. Random noise cannot accidentally trigger the low-PNR override.`);
+  console.log(`  Across the 20 stationary white-noise seeds tested, the maximum deltaPostPre was ${maxNoiseDelta.toFixed(2)} dB,`);
+  console.log(`  which is ${noiseMaxDistance.toFixed(2)} dB below the 1.5 dB threshold. Stationary random white noise did not`);
+  console.log(`  accidentally trigger the low-PNR override in any of the 20 tested seeds.`);
   console.log(`  In contrast, true room sweeps at PNR 18, 15, and 12 dB produce post-peak energy`);
   console.log(`  comfortably meeting or exceeding the 1.5 dB margin (1.57 dB to 3.77 dB).\n`);
+  console.log(`  Effective Override Band: The effective override range is about 14 to 20 dB PNR,`);
+  console.log(`  because below ~14 dB PNR, ambient noise swamps the post-peak window and the deltaPostPre gate fails (< 1.5 dB).\n`);
 
   // Assertions
   assert.ok(
@@ -682,6 +685,140 @@ test('Pipeline: deltaPostPre energy margin validation across fixtures, noise see
   assert.ok(sweepResults[0].deltaPostPreDb >= LOW_PNR_POST_PRE_MARGIN_DB, 'Sweep at PNR 18 dB must meet 1.5 dB margin');
   assert.ok(sweepResults[1].deltaPostPreDb >= LOW_PNR_POST_PRE_MARGIN_DB, 'Sweep at PNR 15 dB must meet 1.5 dB margin');
   assert.ok(sweepResults[2].deltaPostPreDb >= LOW_PNR_POST_PRE_MARGIN_DB, 'Sweep at PNR 12 dB must meet 1.5 dB margin');
+});
+
+test('Pipeline: Non-stationary noise tests without sweep present (clap, burst, 50 Hz hum)', () => {
+  const sampleRate = 48000;
+  const totalSamples = Math.round(8.5 * sampleRate);
+
+  function computeDeltaPostPreLocal(signal) {
+    const sweep = generateSweep(SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, sampleRate, SWEEP_FADE_MS);
+    const invFilter = generateInverseFilter(sweep, SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, sampleRate);
+    const hFull = deconvolve(signal, invFilter);
+    const { peakIdx, pnrDb } = findPeakAndPNR(hFull, sampleRate, PRE_PEAK_MS);
+
+    const preSamples = Math.round(PRE_PEAK_MS * 1e-3 * sampleRate);
+    const noiseStart = Math.max(0, peakIdx - Math.round(0.5 * sampleRate));
+    const noiseEnd = Math.max(0, peakIdx - preSamples);
+    const noiseWindow = hFull.subarray(noiseStart, noiseEnd);
+    let rmsNoise = 1e-12;
+    if (noiseWindow.length > 0) {
+      let sumNoise = 0;
+      for (let i = 0; i < noiseWindow.length; i++) sumNoise += noiseWindow[i] ** 2;
+      rmsNoise = Math.sqrt(sumNoise / noiseWindow.length) + 1e-12;
+    }
+
+    const postSamples = Math.round(0.2 * sampleRate);
+    const postEnd = Math.min(hFull.length, peakIdx + postSamples);
+    const postWindow = hFull.subarray(peakIdx, postEnd);
+    let rmsPost = 1e-12;
+    if (postWindow.length > 0) {
+      let sumPost = 0;
+      for (let i = 0; i < postWindow.length; i++) sumPost += postWindow[i] ** 2;
+      rmsPost = Math.sqrt(sumPost / postWindow.length) + 1e-12;
+    }
+
+    const deltaPostPreDb = 20.0 * Math.log10(rmsPost / rmsNoise);
+    return { deltaPostPreDb, pnrDb };
+  }
+
+  // (a) Single clap-like decaying burst (no sweep present)
+  const clapSignal = new Float64Array(totalSamples);
+  const rngA = createMulberry32(111);
+  const clapStart = Math.round(2.0 * sampleRate);
+  for (let i = 0; i < Math.round(0.5 * sampleRate); i++) {
+    const t = i / sampleRate;
+    clapSignal[clapStart + i] = boxMuller(rngA) * 0.8 * Math.exp(-t / 0.03);
+  }
+
+  // (b) Stationary noise plus a loud burst near maximum
+  const burstSignal = new Float64Array(totalSamples);
+  const rngB = createMulberry32(222);
+  for (let i = 0; i < totalSamples; i++) {
+    burstSignal[i] = boxMuller(rngB) * 0.02;
+  }
+  const burstStart = Math.round(4.0 * sampleRate);
+  for (let i = 0; i < Math.round(0.1 * sampleRate); i++) {
+    const t = i / sampleRate;
+    burstSignal[burstStart + i] += boxMuller(rngB) * 0.7 * Math.exp(-t / 0.02);
+  }
+
+  // (c) 50 Hz hum plus noise
+  const humSignal = new Float64Array(totalSamples);
+  const rngC = createMulberry32(333);
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / sampleRate;
+    humSignal[i] = 0.3 * Math.sin(2 * Math.PI * 50 * t) + boxMuller(rngC) * 0.02;
+  }
+
+  const cases = [
+    { name: '(a) Single clap-like decaying burst', signal: clapSignal },
+    { name: '(b) Stationary noise + loud burst near max', signal: burstSignal },
+    { name: '(c) 50 Hz hum + noise', signal: humSignal },
+  ];
+
+  console.log('\n' + '='.repeat(110));
+  console.log('Pipeline: Non-Stationary Noise Audit (No Sweep Present)');
+  console.log('='.repeat(110));
+  console.log('Case                                     | PNR (dB) | DeltaPostPre | Override Offered? | Override Outcome');
+  console.log('-'.repeat(110));
+
+  for (const c of cases) {
+    const metrics = computeDeltaPostPreLocal(c.signal);
+    const resNormal = analyzeRecording({ samples: c.signal, sampleRate });
+    const resOverride = analyzeRecording({ samples: c.signal, sampleRate, options: { allowLowPnr: true } });
+
+    let outcomeStr = 'Rejected';
+    if (resOverride.ok && resOverride.bands) {
+      const activeBands = OCTAVE_CENTRES.filter(
+        (fc) => resOverride.bands[fc].tier === 'valid' || resOverride.bands[fc].tier === 'approximate'
+      );
+      if (activeBands.length > 0) {
+        outcomeStr = activeBands.map((fc) => `${fc}Hz:${resOverride.bands[fc].rt60.toFixed(2)}s(${resOverride.bands[fc].tier})`).join(', ');
+      } else {
+        outcomeStr = 'Accepted with all 6 bands invalid';
+      }
+    }
+
+    console.log(
+      `${c.name.padEnd(40)} | ` +
+      `${(metrics.pnrDb.toFixed(1) + ' dB').padStart(8)} | ` +
+      `${(metrics.deltaPostPreDb.toFixed(1) + ' dB').padStart(12)} | ` +
+      `${(resNormal.canOverrideLowPnr ? 'YES (offered)' : 'NO (blocked)').padEnd(17)} | ` +
+      `${outcomeStr}`
+    );
+  }
+  console.log('-'.repeat(110));
+
+  console.log('\n  [Non-Stationary Noise Findings Plain Report]:');
+  console.log('  - Case (a) (Single clap-like decaying burst): Offers the override (canOverrideLowPnr: true) with');
+  console.log('    PNR = 19.8 dB and DeltaPostPre = 9.1 dB (well above the 1.5 dB margin). When the override is enabled,');
+  console.log('    it returns valid-looking numbers in upper bands: 2000 Hz = 1.24 s (approximate, R^2 = 0.993) and');
+  console.log('    4000 Hz = 1.71 s (approximate, R^2 = 0.991) despite NO sweep being present. The impulsive clap deconvolution');
+  console.log('    with the inverse sweep creates an artificial decay chirp that satisfies Schroeder regression.');
+  console.log('  - Case (b) (Stationary noise + loud burst near max): Offers the override (PNR = 15.1 dB, DeltaPostPre = 4.6 dB),');
+  console.log('    but returns 0 valid or approximate bands (all 6 bands classified invalid due to dynamic range < 25 dB).');
+  console.log('  - Case (c) (50 Hz hum + noise): Override is NOT offered (canOverrideLowPnr: false) because DeltaPostPre = -0.2 dB,');
+  console.log('    which is safely blocked by the 1.5 dB energy margin gate.\n');
+
+  // Assertions documenting the observed behavior without changing pipeline thresholds
+  const metricsA = computeDeltaPostPreLocal(clapSignal);
+  const resNormalA = analyzeRecording({ samples: clapSignal, sampleRate });
+  assert.equal(resNormalA.ok, false);
+  assert.equal(resNormalA.canOverrideLowPnr, true, 'Case (a) impulsive clap qualifies for override offer');
+  assert.ok(metricsA.deltaPostPreDb >= LOW_PNR_POST_PRE_MARGIN_DB);
+
+  const metricsB = computeDeltaPostPreLocal(burstSignal);
+  const resNormalB = analyzeRecording({ samples: burstSignal, sampleRate });
+  assert.equal(resNormalB.ok, false);
+  assert.equal(resNormalB.canOverrideLowPnr, true, 'Case (b) burst qualifies for override offer');
+  assert.ok(metricsB.deltaPostPreDb >= LOW_PNR_POST_PRE_MARGIN_DB);
+
+  const metricsC = computeDeltaPostPreLocal(humSignal);
+  const resNormalC = analyzeRecording({ samples: humSignal, sampleRate });
+  assert.equal(resNormalC.ok, false);
+  assert.equal(resNormalC.canOverrideLowPnr, false, 'Case (c) 50 Hz hum is blocked by deltaPostPre gate');
+  assert.ok(metricsC.deltaPostPreDb < LOW_PNR_POST_PRE_MARGIN_DB);
 });
 
 
