@@ -13,7 +13,7 @@
   --primary-container: #cbe6ff;
   --on-primary: #ffffff;
   --success-color: #107c41;
-  --warning-color: #b25e00;
+  --warning-color: #9a4f00;
   --danger-color: #ba1a1a;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
@@ -210,7 +210,13 @@ button, .btn, select {
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-button:focus-visible, .btn:focus-visible, select:focus-visible {
+button:focus-visible,
+.btn:focus-visible,
+select:focus-visible,
+input:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
   outline: 3px solid var(--primary-color);
   outline-offset: 2px;
 }
@@ -378,6 +384,11 @@ button:focus-visible, .btn:focus-visible, select:focus-visible {
   font-size: 0.85rem;
   padding: 8px 12px;
   min-height: 48px;
+  min-width: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
 .measurement-list {
@@ -567,7 +578,7 @@ button:focus-visible, .btn:focus-visible, select:focus-visible {
 }
 
 .btn-update-reload {
-  min-height: 40px;
+  min-height: 48px;
   min-width: 80px;
   padding: 8px 16px;
   font-size: 0.88rem;
@@ -1094,9 +1105,10 @@ details[open] .dimensions-summary::after {
 }
 
 .btn-sm {
-  min-height: 36px;
-  padding: 6px 12px;
-  font-size: 0.82rem;
+  min-height: 48px;
+  min-width: 48px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
 }
 
 /* Two-Device Help Box */
@@ -1158,7 +1170,8 @@ details[open] .dimensions-summary::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 42px;
+  min-height: 48px;
+  min-width: 48px;
 }
 
 .file-name-display {
@@ -1735,6 +1748,8 @@ details[open] .dimensions-summary::after {
   line-height: 1.45;
 }
 
+
+
 .no-dim-prompt {
   padding: 14px;
   background-color: var(--bg-color);
@@ -1771,6 +1786,146 @@ details[open] .dimensions-summary::after {
   color: var(--text-secondary);
   line-height: 1.45;
 }
+
+/* Accessibility: Respect Reduced Motion Preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Header Actions */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-header-help {
+  min-height: 48px;
+  min-width: 48px;
+  padding: 8px 14px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+/* Backup Prompt Box */
+.backup-prompt-box {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background-color: var(--bg-color);
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (min-width: 500px) {
+  .backup-prompt-box {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.backup-prompt-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.backup-icon {
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.backup-text {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.backup-time {
+  font-weight: 700;
+  color: var(--primary-color);
+}
+
+/* Floor Plan Accessible Table Container */
+.floorplan-table-container {
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--surface-color);
+  overflow: hidden;
+  padding: 8px;
+}
+
+/* Help Modal Body & Cards */
+.modal-help-card {
+  max-width: 650px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-help-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.help-card-item {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background-color: var(--bg-color);
+}
+
+.help-card-item summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.help-card-summary-desc {
+  font-weight: 400;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.help-card-details {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.help-card-details ul,
+.help-card-details ol {
+  padding-left: 20px;
+}
+
+
+
+
 
 
 

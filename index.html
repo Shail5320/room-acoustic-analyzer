@@ -25,7 +25,12 @@
         <h1 class="app-title">EchoMap</h1>
         <p class="app-subtitle">Room acoustic analyzer</p>
       </div>
-      <div id="sw-status" class="status-indicator" title="Service Worker Status" aria-live="polite">PWA ready</div>
+      <div class="header-actions">
+        <button id="btn-open-help" class="btn btn-secondary btn-header-help" type="button" aria-label="Open Acoustic Guide and In-App Help">
+          ℹ️ Guide
+        </button>
+        <div id="sw-status" class="status-indicator" title="Service Worker Status" aria-live="polite">PWA ready</div>
+      </div>
     </header>
 
     <main id="app" class="app-container">
@@ -57,6 +62,19 @@
           <button id="btn-session-list" class="btn btn-secondary" type="button">Sessions</button>
           <button id="btn-export-csv" class="btn btn-primary" type="button">Export CSV</button>
           <button id="btn-export-json" class="btn btn-secondary" type="button">Export JSON</button>
+        </div>
+
+        <div id="backup-prompt-box" class="backup-prompt-box">
+          <div class="backup-prompt-content">
+            <span class="backup-icon" aria-hidden="true">💾</span>
+            <div class="backup-text">
+              <strong>Device Storage Notice:</strong> Browsers can clear saved data when disk space is low.
+              <span id="backup-last-time" class="backup-time">Last export: Never</span>
+            </div>
+          </div>
+          <button id="btn-quick-backup" class="btn btn-secondary btn-sm" type="button" aria-label="Export JSON Backup">
+            Backup Now (JSON)
+          </button>
         </div>
       </section>
 
@@ -155,10 +173,36 @@
             </button>
           </div>
           <select id="select-aspect-ratio" class="form-select" aria-label="Room aspect ratio"></select>
+          <button id="btn-toggle-canvas-table" class="btn btn-secondary btn-sm" type="button" aria-expanded="false" aria-controls="floorplan-table-container">
+            Show as table
+          </button>
         </div>
 
-        <div class="floorplan-canvas-container">
-          <canvas id="floorplan-canvas" class="floorplan-canvas"></canvas>
+        <div id="floorplan-canvas-container" class="floorplan-canvas-container">
+          <canvas id="floorplan-canvas" class="floorplan-canvas" aria-label="Interactive 2D room floor plan canvas" role="img"></canvas>
+        </div>
+
+        <!-- Accessible text alternative for the canvases -->
+        <div id="floorplan-table-container" class="floorplan-table-container" hidden>
+          <div class="table-responsive">
+            <table class="table acoustic-table" aria-label="Room measurement points and RT60 values">
+              <thead>
+                <tr>
+                  <th>Point</th>
+                  <th>Relative (X, Y)</th>
+                  <th>Status</th>
+                  <th>Type</th>
+                  <th>125 Hz</th>
+                  <th>250 Hz</th>
+                  <th>500 Hz</th>
+                  <th>1 kHz</th>
+                  <th>2 kHz</th>
+                  <th>4 kHz</th>
+                </tr>
+              </thead>
+              <tbody id="floorplan-table-tbody"></tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Dev-only test measurement button (clearly marked DEV, easily removed) -->
@@ -245,13 +289,15 @@
 
         <!-- Worker Progress & Execution Mode -->
         <div id="analyze-progress-container" class="analyze-progress-container" hidden>
-          <div class="progress-bar-bg">
+          <div class="progress-bar-bg" role="progressbar" id="analyze-progressbar-role" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Analysis Progress">
             <div id="analyze-progress-bar" class="progress-bar-fill" style="width: 0%"></div>
           </div>
           <div class="progress-meta">
             <span id="analyze-progress-message" class="progress-message">Starting analysis...</span>
             <span id="analyze-execution-mode" class="execution-mode-badge">analysed in: worker</span>
           </div>
+          <!-- Screen reader live announcer for stage transitions and final result only -->
+          <div id="analysis-live-announcer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <!-- Rejection / Error Card -->
@@ -685,7 +731,7 @@
         <ul id="measurement-list" class="measurement-list"></ul>
       </section>
 
-      <section class="card quick-status" data-version="echomap-v9">
+      <section class="card quick-status" data-version="echomap-v10">
         <h3>System & PWA Status</h3>
         <dl class="status-list">
           <div>
@@ -702,7 +748,7 @@
           </div>
           <div>
             <dt>Build Version:</dt>
-            <dd id="status-version">v9 (echomap-v9)</dd>
+            <dd id="status-version">v10 (echomap-v10)</dd>
           </div>
         </dl>
       </section>
@@ -721,6 +767,20 @@
           </div>
           <div class="modal-footer">
             <button id="btn-modal-dismiss" class="btn btn-secondary" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- In-App Acoustic Guide & Help Modal -->
+      <div id="modal-help" class="modal-backdrop" hidden>
+        <div class="modal-card modal-help-card" role="dialog" aria-modal="true" aria-labelledby="modal-help-title">
+          <div class="modal-header">
+            <h2 id="modal-help-title" class="modal-title">📖 Acoustic Guide & Help</h2>
+            <button id="btn-close-help-modal" class="btn-close-modal" aria-label="Close help modal" type="button">✕</button>
+          </div>
+          <div id="modal-help-body" class="modal-body modal-help-body"></div>
+          <div class="modal-footer">
+            <button id="btn-modal-help-dismiss" class="btn btn-secondary" type="button">Close Guide</button>
           </div>
         </div>
       </div>

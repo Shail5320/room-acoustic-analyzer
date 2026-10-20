@@ -44,7 +44,8 @@ import { renderHeatmapLegendCanvas } from './heatmap.js';
 import { loadAudioFile } from '../audio/wav.js';
 import { downloadSweepWav } from '../audio/sweep-wav.js';
 import { runSelfTest } from '../analysis/selftest.js';
-import { formatDecibels } from './format.js';
+import { formatDecibels, formatAudioErrorMessage, formatTimeAgo } from './format.js';
+import { HELP_TOPICS } from './help.js';
 import {
   aggregateSessionBands,
   calculateBandTreatment,
@@ -101,12 +102,20 @@ export async function initApp() {
   const modeHeatmapBtn = document.getElementById('btn-mode-heatmap');
   const aspectRatioSelect = document.getElementById('select-aspect-ratio');
   const devAddFakeBtn = document.getElementById('btn-dev-fake');
+  const btnToggleCanvasTable = document.getElementById('btn-toggle-canvas-table');
+  const floorplanCanvasContainer = document.getElementById('floorplan-canvas-container');
+  const floorplanTableContainer = document.getElementById('floorplan-table-container');
+  const floorplanTableTbody = document.getElementById('floorplan-table-tbody');
   const bandSelectorContainer = document.getElementById('band-selector');
   const bandTierSummaryEl = document.getElementById('band-tier-summary');
   const measurementListEl = document.getElementById('measurement-list');
   const emptyListNotice = document.getElementById('empty-list-notice');
   const pointCountBadge = document.getElementById('point-count-badge');
   const clearAllBtn = document.getElementById('btn-clear-points');
+
+  // DOM Elements - Backup Prompt
+  const btnQuickBackup = document.getElementById('btn-quick-backup');
+  const backupLastTimeEl = document.getElementById('backup-last-time');
 
   // DOM Elements - Heatmap Panel & Legend
   const heatmapCard = document.getElementById('heatmap-card');
@@ -120,12 +129,17 @@ export async function initApp() {
   const btnRangeFixed = document.getElementById('btn-range-fixed');
   const heatmapLegendCanvas = document.getElementById('heatmap-legend-canvas');
 
-  // DOM Elements - Sessions Modal
+  // DOM Elements - Modals & Guides
   const modalSessions = document.getElementById('modal-sessions');
   const savedSessionsList = document.getElementById('saved-sessions-list');
   const savedSessionsEmpty = document.getElementById('saved-sessions-empty');
   const btnCloseSessionsModal = document.getElementById('btn-close-sessions-modal');
   const btnModalDismiss = document.getElementById('btn-modal-dismiss');
+  const btnOpenHelp = document.getElementById('btn-open-help');
+  const modalHelp = document.getElementById('modal-help');
+  const btnCloseHelpModal = document.getElementById('btn-close-help-modal');
+  const btnModalHelpDismiss = document.getElementById('btn-modal-help-dismiss');
+  const modalHelpBody = document.getElementById('modal-help-body');
 
   // DOM Elements - Phase 3a Analysis & Simulation Card
   const btnDownloadSweep = document.getElementById('btn-download-sweep');
@@ -140,6 +154,7 @@ export async function initApp() {
   const analyzeProgressBar = document.getElementById('analyze-progress-bar');
   const analyzeProgressMessage = document.getElementById('analyze-progress-message');
   const analyzeExecutionMode = document.getElementById('analyze-execution-mode');
+  const analysisLiveAnnouncer = document.getElementById('analysis-live-announcer');
   const analyzeRejectCard = document.getElementById('analyze-reject-card');
   const analyzeRejectReason = document.getElementById('analyze-reject-reason');
   const analyzeRejectAdvice = document.getElementById('analyze-reject-advice');
@@ -882,6 +897,96 @@ export async function initApp() {
 
       measurementListEl.appendChild(item);
     }
+
+    if (isTableView) {
+      renderFloorPlanTable();
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Floor Plan Accessible Data Table Alternative
+  // -------------------------------------------------------------
+  let isTableView = false;
+
+  function renderFloorPlanTable() {
+    if (!floorplanTableTbody) return;
+    floorplanTableTbody.innerHTML = '';
+
+    const points = model.measurements || [];
+    if (points.length === 0) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 10;
+      td.className = 'empty-table-cell';
+      td.style.padding = '16px';
+      td.style.textAlign = 'center';
+      td.style.color = 'var(--text-secondary)';
+      td.textContent = 'No measurement points placed yet. Tap inside the room on the canvas or use [DEV] to add test points.';
+      tr.appendChild(td);
+      floorplanTableTbody.appendChild(tr);
+      return;
+    }
+
+    points.forEach((pt, index) => {
+      const tr = document.createElement('tr');
+      const isMeasured = pt.status === 'measured';
+      const isDev = Boolean(pt.fake);
+
+      // Point #
+      const tdNum = document.createElement('td');
+      tdNum.innerHTML = `<strong>Pt ${index + 1}</strong>`;
+      tr.appendChild(tdNum);
+
+      // Coordinates
+      const tdCoords = document.createElement('td');
+      tdCoords.textContent = `(${pt.x.toFixed(2)}, ${pt.y.toFixed(2)})`;
+      tr.appendChild(tdCoords);
+
+      // Status
+      const tdStatus = document.createElement('td');
+      tdStatus.innerHTML = `<span class="badge ${isMeasured ? 'badge-valid' : 'badge-approx'}">${pt.status}</span>`;
+      tr.appendChild(tdStatus);
+
+      // Type
+      const tdType = document.createElement('td');
+      tdType.textContent = isDev ? 'Simulated [DEV]' : (isMeasured ? 'Real (WAV)' : 'Pending');
+      tr.appendChild(tdType);
+
+      // Octave bands (125 to 4000)
+      for (const fc of OCTAVE_BANDS) {
+        const tdBand = document.createElement('td');
+        if (isMeasured && pt.bands && pt.bands[fc]) {
+          const b = pt.bands[fc];
+          const val = Number.isFinite(b.rt60) ? b.rt60.toFixed(2) + ' s' : '—';
+          const tier = b.tier || 'invalid';
+          const tierClass = tier === 'valid' ? 'symbol-valid' : tier === 'approximate' ? 'symbol-approx' : 'symbol-invalid';
+          tdBand.innerHTML = `<span>${val}</span> <span class="legend-symbol ${tierClass}" title="Tier: ${tier}"></span>`;
+        } else {
+          tdBand.textContent = '—';
+        }
+        tr.appendChild(tdBand);
+      }
+
+      floorplanTableTbody.appendChild(tr);
+    });
+  }
+
+  if (btnToggleCanvasTable && floorplanCanvasContainer && floorplanTableContainer) {
+    btnToggleCanvasTable.addEventListener('click', () => {
+      isTableView = !isTableView;
+      btnToggleCanvasTable.setAttribute('aria-expanded', String(isTableView));
+      if (isTableView) {
+        floorplanCanvasContainer.hidden = true;
+        floorplanTableContainer.hidden = false;
+        btnToggleCanvasTable.textContent = 'Show canvas';
+        renderFloorPlanTable();
+      } else {
+        floorplanTableContainer.hidden = true;
+        floorplanCanvasContainer.hidden = false;
+        btnToggleCanvasTable.textContent = 'Show as table';
+        view.render();
+      }
+    });
   }
 
   // -------------------------------------------------------------
@@ -997,6 +1102,61 @@ export async function initApp() {
   if (btnModalDismiss) btnModalDismiss.addEventListener('click', closeSessionsModal);
 
   // -------------------------------------------------------------
+  // Acoustic Guide & In-App Help Modal
+  // -------------------------------------------------------------
+  function initHelpModal() {
+    if (!modalHelpBody || modalHelpBody.children.length > 0) return;
+    modalHelpBody.innerHTML = '';
+    for (const topic of HELP_TOPICS) {
+      const details = document.createElement('details');
+      details.className = 'help-card-item';
+      if (topic.id === 'rt60' || topic.id === 'two-device-workflow') {
+        details.open = true;
+      }
+      const summary = document.createElement('summary');
+      summary.innerHTML = `<span>${topic.title}</span><span class="help-card-summary-desc">${topic.summary}</span>`;
+      details.appendChild(summary);
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'help-card-details';
+      contentDiv.innerHTML = topic.content;
+      details.appendChild(contentDiv);
+
+      modalHelpBody.appendChild(details);
+    }
+  }
+
+  function openHelpModal() {
+    initHelpModal();
+    if (modalHelp) modalHelp.hidden = false;
+  }
+
+  function closeHelpModal() {
+    if (modalHelp) modalHelp.hidden = true;
+  }
+
+  if (btnOpenHelp) btnOpenHelp.addEventListener('click', openHelpModal);
+  if (btnCloseHelpModal) btnCloseHelpModal.addEventListener('click', closeHelpModal);
+  if (btnModalHelpDismiss) btnModalHelpDismiss.addEventListener('click', closeHelpModal);
+
+  if (modalHelp) {
+    modalHelp.addEventListener('click', (e) => {
+      if (e.target === modalHelp) closeHelpModal();
+    });
+  }
+  if (modalSessions) {
+    modalSessions.addEventListener('click', (e) => {
+      if (e.target === modalSessions) closeSessionsModal();
+    });
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeHelpModal();
+      closeSessionsModal();
+    }
+  });
+
+  // -------------------------------------------------------------
   // Session Name Input & Actions
   // -------------------------------------------------------------
   if (sessionNameInput) {
@@ -1054,8 +1214,35 @@ export async function initApp() {
       const jsonContent = toJSON(model.toJSON());
       const filename = `${sanitizeFilename(model.name)}.json`;
       downloadFile(jsonContent, filename, 'application/json;charset=utf-8');
+      try {
+        localStorage.setItem('echomap_last_backup_time', String(Date.now()));
+        updateBackupPrompt();
+      } catch (_) {}
     });
   }
+
+  // -------------------------------------------------------------
+  // Backup Prompt (Warns users about browser storage eviction)
+  // -------------------------------------------------------------
+  function updateBackupPrompt() {
+    if (!backupLastTimeEl) return;
+    try {
+      const stored = localStorage.getItem('echomap_last_backup_time');
+      const timeMs = stored ? Number(stored) : null;
+      backupLastTimeEl.textContent = `Last export: ${formatTimeAgo(timeMs)}`;
+    } catch (_) {
+      backupLastTimeEl.textContent = 'Last export: Available via JSON';
+    }
+  }
+
+  if (btnQuickBackup && btnExportJson) {
+    btnQuickBackup.addEventListener('click', () => {
+      btnExportJson.click();
+    });
+  }
+
+  updateBackupPrompt();
+  setInterval(updateBackupPrompt, 60000);
 
   // -------------------------------------------------------------
   // Phase 3a: Audio Recording Analysis & Simulation View
@@ -1227,6 +1414,8 @@ export async function initApp() {
     return 'Please verify that the audio file was recorded cleanly with the test sweep playing, and try again.';
   }
 
+  let lastAnnouncedStage = null;
+
   function setAnalyzeProgress(stageOrObj, progress, message) {
     let stage = stageOrObj;
     let p = progress;
@@ -1240,9 +1429,19 @@ export async function initApp() {
     if (analyzeProgressBar) {
       const pct = Math.round((Number(p) || 0) * 100);
       analyzeProgressBar.style.width = `${pct}%`;
+      const progressbarRole = document.getElementById('analyze-progressbar-role');
+      if (progressbarRole) {
+        progressbarRole.setAttribute('aria-valuenow', String(pct));
+      }
     }
     if (analyzeProgressMessage) {
       analyzeProgressMessage.textContent = msg || `Processing: ${stage || ''}`;
+    }
+
+    // Announce stage changes ONLY to screen readers (avoids spamming every progress tick)
+    if (stage && stage !== lastAnnouncedStage && analysisLiveAnnouncer) {
+      lastAnnouncedStage = stage;
+      analysisLiveAnnouncer.textContent = `Analysis stage: ${stage}. ${msg || ''}`;
     }
   }
 
@@ -1289,11 +1488,17 @@ export async function initApp() {
         analyzeOverrideRow.hidden = !result.canOverrideLowPnr;
       }
       if (analyzeResultsContainer) analyzeResultsContainer.hidden = true;
+      if (analysisLiveAnnouncer) {
+        analysisLiveAnnouncer.textContent = `Analysis rejected: ${result.rejectReason || 'Check audio recording.'}`;
+      }
       return;
     }
 
     if (analyzeRejectCard) analyzeRejectCard.hidden = true;
     if (analyzeResultsContainer) analyzeResultsContainer.hidden = false;
+    if (analysisLiveAnnouncer) {
+      analysisLiveAnnouncer.textContent = `Analysis complete: PNR ${formatDecibels(result.pnrDb, 1)}, usable decay depth ${formatDecibels(result.dynamicRangeDb, 1)}.`;
+    }
 
     // Badges
     if (badgeSimulated) badgeSimulated.hidden = !result.simulated;
@@ -1303,7 +1508,13 @@ export async function initApp() {
 
     // Execution mode
     if (analyzeExecutionMode) {
-      analyzeExecutionMode.textContent = `analysed in: ${result.executionMode === 'worker' ? 'worker' : 'main thread'}`;
+      if (result.executionMode === 'worker') {
+        analyzeExecutionMode.textContent = 'analysed in: worker';
+        analyzeExecutionMode.title = 'DSP computation executed in dedicated Web Worker.';
+      } else {
+        analyzeExecutionMode.textContent = 'analysed in: main thread (worker fallback)';
+        analyzeExecutionMode.title = 'Web Worker unavailable; executed on main thread.';
+      }
     }
 
     // Audio metadata info text
@@ -1482,11 +1693,15 @@ export async function initApp() {
       } catch (err) {
         console.error('[AudioAnalysisError]', err);
         if (analyzeProgressContainer) analyzeProgressContainer.hidden = true;
+        const errInfo = formatAudioErrorMessage(err);
         if (analyzeRejectCard) {
           analyzeRejectCard.hidden = false;
-          if (analyzeRejectReason) analyzeRejectReason.textContent = err.message || 'Failed to read audio file';
-          if (analyzeRejectAdvice) analyzeRejectAdvice.textContent = 'Please ensure the file is an uncorrupted WAV, MP3, or M4A audio file.';
+          if (analyzeRejectReason) analyzeRejectReason.textContent = errInfo.title;
+          if (analyzeRejectAdvice) analyzeRejectAdvice.textContent = errInfo.message;
           if (analyzeOverrideRow) analyzeOverrideRow.hidden = true;
+        }
+        if (analysisLiveAnnouncer) {
+          analysisLiveAnnouncer.textContent = `Analysis error: ${errInfo.title}. ${errInfo.message}`;
         }
       }
     });

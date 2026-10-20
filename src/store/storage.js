@@ -437,7 +437,22 @@ export class StorageService {
         : [],
     };
 
-    return this._adapter.saveSession(sessionToSave);
+    try {
+      return await this._adapter.saveSession(sessionToSave);
+    } catch (err) {
+      console.warn('[StorageService] Save error in adapter, falling back to memory adapter:', err);
+      const isQuota =
+        err &&
+        (err.name === 'QuotaExceededError' ||
+          (err.message && err.message.toLowerCase().includes('quota')));
+      this._fallbackMessage = isQuota
+        ? 'IndexedDB storage quota exceeded. The app continues working in memory, but sessions will not persist after browser refresh. Please export a JSON backup.'
+        : 'IndexedDB storage unavailable. Sessions are held in memory for this tab only.';
+
+      const memAdapter = new MemoryStorageAdapter();
+      this._adapter = memAdapter;
+      return memAdapter.saveSession(sessionToSave);
+    }
   }
 
   /**
