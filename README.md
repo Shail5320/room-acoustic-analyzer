@@ -126,11 +126,19 @@ The JavaScript implementation was executed on identical binary fixtures (`refere
 ### 3. Tier 2 Verification (Monte Carlo Statistical Recovery on Synthetic Data)
 A 30-seed Monte Carlo study (`reference/monte_carlo.py`) established the empirical statistical variance ($\text{Mean bias} \pm 2\sigma$) of synthetic room decays under Butterworth filtering. End-to-end recovery tests ([`tests/rt60.test.js`](tests/rt60.test.js), [`tests/pipeline.test.js`](tests/pipeline.test.js), [`tests/selftest.test.js`](tests/selftest.test.js)) verify that JS recovers target reverberation times within these empirical $2\sigma$ bounds across all 6 octave bands.
 
-### What Has NOT Yet Been Verified
-The following have **not** yet been formally verified:
-- **Real physical room recordings:** Validation with real physical microphone recordings in furnished rooms.
-- **Comparison with a calibrated meter:** Simultaneous cross-validation against a calibrated Class 1 / Class 2 sound level meter or commercial acoustics analyzer (e.g., REW, ARTA, NTI XL2).
-- **Live in-app microphone capture:** Full validation of live browser `getUserMedia` capture across diverse Android/iOS hardware audio stacks.
+---
+
+## Not Yet Verified
+
+The following aspects have **not** yet been validated:
+1. **Validation on real-room recordings:** Testing and validation against physical impulse responses recorded in diverse real-world furnished rooms.
+2. **Comparison against a calibrated meter or an established measurement tool:** Side-by-side benchmark comparison against a calibrated Class 1 / Class 2 sound level meter or established commercial measurement software (e.g., REW, ARTA, NTI XL2).
+3. **Live in-app microphone capture:** Full validation of live in-browser `getUserMedia` audio capture across diverse mobile and desktop operating systems and hardware audio pipelines.
+4. **The 125 Hz band on real phone hardware:** Transducer frequency response, speaker roll-off, and microphone noise floors at 125 Hz on consumer smartphone and tablet hardware.
+5. **Calibration of the PNR threshold on real recordings:** Calibration and empirical tuning of the 15 dB Peak-to-Noise Ratio cutoff threshold on practical room recordings with real ambient noise.
+
+> [!WARNING]
+> EchoMap results are screening-grade estimates, not certified measurements. They are intended for room assessment, planning, and educational purposes, not for regulatory compliance, building code certification, or legal noise disputes.
 
 ---
 
@@ -145,8 +153,9 @@ This codebase was developed with the assistance of agentic AI coding tools (Clau
 1. **Farina, A. (2000).** "Simultaneous Measurement of Impulse Response and Distortion with a Swept-Sine Technique." *108th Audio Engineering Society Convention*, Paris, France, Preprint 5093.
 2. **Schroeder, M. R. (1965).** "New Method of Measuring Reverberation Time." *The Journal of the Acoustical Society of America*, 37(3), 409–412.
 3. **ISO 3382-1:2009.** "Acoustics — Measurement of room acoustic parameters — Part 1: Performance spaces." International Organization for Standardization, Geneva, Switzerland.
-4. **Sabine, W. C. (1922).** *Collected Papers on Acoustics*. Harvard University Press, Cambridge, MA.
-5. **Eyring, C. F. (1930).** "Reverberation Time in 'Dead' Rooms." *The Journal of the Acoustical Society of America*, 1(2A), 217–241.
+4. **ISO 3382-2:2008.** "Acoustics — Measurement of room acoustic parameters — Part 2: Reverberation time in ordinary rooms." International Organization for Standardization, Geneva, Switzerland.
+5. **Sabine, W. C. (1922).** *Collected Papers on Acoustics*. Harvard University Press, Cambridge, MA.
+6. **Eyring, C. F. (1930).** "Reverberation Time in 'Dead' Rooms." *The Journal of the Acoustical Society of America*, 1(2A), 217–241.
 
 ---
 
