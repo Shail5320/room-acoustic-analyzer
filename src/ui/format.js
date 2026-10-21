@@ -137,8 +137,27 @@ export function escapeHtml(str) {
 }
 
 /**
+ * Format per-band peak times (125 Hz to 4000 Hz) for UI display.
+ *
+ * @param {Array<number>|null|undefined} peakTimes
+ * @returns {string}
+ */
+export function formatPeakTimes(peakTimes) {
+  if (!peakTimes || !Array.isArray(peakTimes) || peakTimes.length === 0) {
+    return '—';
+  }
+  const labels = ['125Hz', '250Hz', '500Hz', '1kHz', '2kHz', '4kHz'];
+  return peakTimes
+    .map((t, idx) => {
+      const lbl = labels[idx] || `b${idx + 1}`;
+      return `${lbl}: ${Number(t).toFixed(2)}s`;
+    })
+    .join(', ');
+}
+
+/**
  * Format acoustic analysis diagnostics for display in a collapsed Details section.
- * Lists PNR, deltaPostPre, ordering score and threshold, sample rate, duration, and which gate fired.
+ * Lists PNR, deltaPostPre, ordering score and threshold, per-band peak times, sample rate, duration, and which gate fired.
  *
  * @param {object|null|undefined} diagnostics
  * @returns {string} HTML string
@@ -160,6 +179,8 @@ export function formatDiagnosticsHtml(diagnostics) {
     ? `${diagnostics.orderingScore.toFixed(3)} (threshold: ≥ ${(diagnostics.orderingThreshold ?? 0.65).toFixed(3)})`
     : '—';
 
+  const peakTimesVal = formatPeakTimes(diagnostics.peakTimes);
+
   const srVal = diagnostics.sampleRate ? `${diagnostics.sampleRate} Hz` : '—';
   const durVal = diagnostics.durationS != null && Number.isFinite(diagnostics.durationS)
     ? `${diagnostics.durationS.toFixed(2)} s`
@@ -174,6 +195,7 @@ export function formatDiagnosticsHtml(diagnostics) {
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">PNR:</td><td style="padding:3px 6px;">${escapeHtml(pnrVal)}</td></tr>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">deltaPostPre:</td><td style="padding:3px 6px;">${escapeHtml(deltaVal)}</td></tr>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Ordering score:</td><td style="padding:3px 6px;">${escapeHtml(scoreVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Per-band peak times:</td><td style="padding:3px 6px;">${escapeHtml(peakTimesVal)}</td></tr>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Sample rate:</td><td style="padding:3px 6px;">${escapeHtml(srVal)}</td></tr>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Duration:</td><td style="padding:3px 6px;">${escapeHtml(durVal)}</td></tr>
   </tbody>

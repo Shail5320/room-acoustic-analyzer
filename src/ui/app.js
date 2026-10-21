@@ -1532,7 +1532,18 @@ export async function initApp() {
 
     if (!result.ok) {
       if (analyzeRejectCard) analyzeRejectCard.hidden = false;
-      if (analyzeRejectReason) analyzeRejectReason.textContent = result.rejectReason || 'Analysis failed';
+
+      // Ensure rejection does not claim a clap unless evidence specifically supports it (neutral wording when cause is unclear)
+      let rejectMsg = result.rejectReason || 'Analysis failed';
+      if (rejectMsg.toLowerCase().includes('clap')) {
+        const sig = result.sweepSignature || (result.diagnostics ? result.diagnostics : null);
+        const isClapEvident = sig && (sig.totalSpan != null && sig.totalSpan < 0.20) && (sig.monotonicCount === 0);
+        if (!isClapEvident) {
+          rejectMsg = "This doesn't look like the EchoMap test sweep. Play the downloaded sweep.";
+        }
+      }
+
+      if (analyzeRejectReason) analyzeRejectReason.textContent = rejectMsg;
       if (analyzeRejectAdvice) analyzeRejectAdvice.textContent = getRejectionAdvice(result.rejectReason);
       if (analyzeOverrideRow) {
         analyzeOverrideRow.hidden = !result.canOverrideLowPnr;
@@ -1545,6 +1556,7 @@ export async function initApp() {
           deltaPostPreThresholdDb: 1.5,
           orderingScore: result.sweepSignature ? result.sweepSignature.score : null,
           orderingThreshold: 0.65,
+          peakTimes: result.sweepSignature ? result.sweepSignature.peakTimes : null,
           sampleRate: audioMeta.sampleRate || result.sampleRate,
           durationS: audioMeta.durationS || (audioMeta.samples ? audioMeta.samples.length / (audioMeta.sampleRate || 48000) : result.durationS),
           gateFired: result.gateFired || result.rejectReason || 'Rejection gate',
@@ -1553,7 +1565,7 @@ export async function initApp() {
       }
       if (analyzeResultsContainer) analyzeResultsContainer.hidden = true;
       if (analysisLiveAnnouncer) {
-        analysisLiveAnnouncer.textContent = `Analysis rejected: ${result.rejectReason || 'Check audio recording.'}`;
+        analysisLiveAnnouncer.textContent = `Analysis rejected: ${rejectMsg}`;
       }
       return;
     }
@@ -1568,6 +1580,7 @@ export async function initApp() {
         deltaPostPreThresholdDb: 1.5,
         orderingScore: result.sweepSignature ? result.sweepSignature.score : null,
         orderingThreshold: 0.65,
+        peakTimes: result.sweepSignature ? result.sweepSignature.peakTimes : null,
         sampleRate: audioMeta.sampleRate || result.sampleRate,
         durationS: audioMeta.durationS || (audioMeta.samples ? audioMeta.samples.length / (audioMeta.sampleRate || 48000) : result.durationS),
         gateFired: result.gateFired || 'None (All gates passed)',

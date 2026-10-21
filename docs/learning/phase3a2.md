@@ -239,7 +239,7 @@ Because low-confidence measurements can introduce false or imprecise decays, Ech
    - **Negative Cases (7 configurations):** Clean clap, noisy clap, noise + burst, 50 Hz hum + noise, pure white noise, pure brown noise, pure silence. All 7 cases are rejected with scores from $0.000$ to $0.407$. The smallest negative margin below threshold is **-0.243** (pure white noise: score 0.407).
    - **Separation Gap:** A wide gap of **0.341 score units** separates the highest negative non-sweep sound ($0.407$) from the lowest valid sweep sound ($0.748$), proving the $0.650$ threshold is well-centered and robust.
 5. **Debug Diagnostics in UI:**
-   To enable immediate debugging of field recordings, both accepted results and rejected cards render a collapsed `<details>` section displaying: PNR (dB), $\Delta E_{\text{post/pre}}$ (dB), ordering score and threshold, sample rate (Hz), duration (s), and which specific gate fired.
+   To enable immediate debugging of field recordings, both accepted results and rejected cards render a collapsed `<details>` section displaying: PNR (dB), $\Delta E_{\text{post/pre}}$ (dB), ordering score and threshold, per-band peak times (125–4000 Hz), sample rate (Hz), duration (s), and which specific gate fired. Neutral phrasing is used when rejection reason is not demonstrably an impulsive handclap.
 
 ---
 

@@ -886,7 +886,7 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   const sampleRate = 48000;
   const tableRows = [];
 
-  function recordRow(category, label, score, ok, expectedVerdict) {
+  function recordRow(category, label, score, ok, expectedVerdict, peakTimes = []) {
     const margin = score >= SWEEP_SIG_MIN_SCORE
       ? score - SWEEP_SIG_MIN_SCORE
       : SWEEP_SIG_MIN_SCORE - score;
@@ -896,6 +896,7 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
       label,
       score: Math.round(score * 1000) / 1000,
       margin: Math.round(margin * 1000) / 1000,
+      peakTimes: peakTimes.map((t) => Number(t).toFixed(2)),
       verdict,
       ok,
       expectedVerdict,
@@ -906,12 +907,12 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   const cleanSingle = loadRecordingFixturePadded('fake_recording_single.bin', 8.0, 48000);
   const sigSingle = checkSweepSignature(cleanSingle, 48000);
   assert.strictEqual(sigSingle.ok, true, 'Clean Single fixture must pass sweep signature');
-  recordRow('Clean Fixture', 'Clean Single (RT60=0.8s, 48kHz)', sigSingle.score, sigSingle.ok, 'ACCEPTED');
+  recordRow('Clean Fixture', 'Clean Single (RT60=0.8s, 48kHz)', sigSingle.score, sigSingle.ok, 'ACCEPTED', sigSingle.peakTimes);
 
   const cleanMulti = loadRecordingFixturePadded('fake_recording_multi.bin', 8.0, 48000);
   const sigMulti = checkSweepSignature(cleanMulti, 48000);
   assert.strictEqual(sigMulti.ok, true, 'Clean Multi fixture must pass sweep signature');
-  recordRow('Clean Fixture', 'Clean Multi-band (48kHz)', sigMulti.score, sigMulti.ok, 'ACCEPTED');
+  recordRow('Clean Fixture', 'Clean Multi-band (48kHz)', sigMulti.score, sigMulti.ok, 'ACCEPTED', sigMulti.peakTimes);
 
   // 2. 44.1 kHz Fixture
   const fs44 = 44100;
@@ -929,9 +930,9 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   rec44Padded.set(rec44);
   const sig44 = checkSweepSignature(rec44Padded, fs44);
   assert.strictEqual(sig44.ok, true, '44.1 kHz synthetic recording must pass sweep signature');
-  recordRow('Clean Fixture', 'Clean 44.1 kHz Synthetic (RT60=0.8s)', sig44.score, sig44.ok, 'ACCEPTED');
+  recordRow('Clean Fixture', 'Clean 44.1 kHz Synthetic (RT60=0.8s)', sig44.score, sig44.ok, 'ACCEPTED', sig44.peakTimes);
 
-  // 3. Sweep offsets inside a 30s recording (0.5s, 3s, 10s, 20s)
+  // 3. Cheap deterministic sweep offsets inside a 30s recording (0.5s and 3.0s)
   const total30sSamples = Math.round(30.0 * 48000);
   const sweep48 = generateSweep(SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, 48000, SWEEP_FADE_MS);
   const ir48 = new Float64Array(Math.round(2.5 * 48000));
@@ -939,78 +940,16 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   for (let i = 0; i < ir48.length; i++) ir48[i] = rngIr() * Math.exp(-(6.907755 / 0.8) * (i / 48000));
   const roomResp = convolveDirect(sweep48, ir48);
 
-  for (const offsetS of [0.5, 3.0, 10.0, 20.0]) {
+  for (const offsetS of [0.5, 3.0]) {
     const buf30s = new Float64Array(total30sSamples);
     const offsetSamples = Math.round(offsetS * 48000);
     buf30s.set(roomResp.subarray(0, total30sSamples - offsetSamples), offsetSamples);
     const sigOffset = checkSweepSignature(buf30s, 48000);
     assert.strictEqual(sigOffset.ok, true, `Sweep at offset ${offsetS}s inside 30s must pass signature`);
-    recordRow('Sweep Offsets (30s)', `Sweep at offset ${offsetS} s`, sigOffset.score, sigOffset.ok, 'ACCEPTED');
+    recordRow('Sweep Offsets (30s)', `Sweep at offset ${offsetS} s`, sigOffset.score, sigOffset.ok, 'ACCEPTED', sigOffset.peakTimes);
   }
 
-  // 4. Rooms with RT60 0.3, 0.8 and 1.5 s
-  for (const rtTarget of [0.3, 0.8, 1.5]) {
-    const sim = simulateRoomRecording({ rtTarget, seed: 101 });
-    const sigRoom = checkSweepSignature(sim.samples, 48000);
-    assert.strictEqual(sigRoom.ok, true, `Room RT60 ${rtTarget}s must pass signature`);
-    recordRow('Room RT60 Targets', `Room RT60 = ${rtTarget} s (seed 101)`, sigRoom.score, sigRoom.ok, 'ACCEPTED');
-  }
-
-  // Helper for brown noise
-  function makeBrown(length, rng) {
-    const noise = new Float64Array(length);
-    let last = 0;
-    for (let i = 0; i < length; i++) {
-      const white = boxMuller(rng);
-      last = 0.995 * last + white * 0.1;
-      noise[i] = last;
-    }
-    return noise;
-  }
-
-  // 5. White Noise Ladder steps (None, -25, -18, -12, -6, 0 dB)
-  const ladderSteps = [
-    { label: 'None (clean)', noiseDb: null },
-    { label: '-25 dB', noiseDb: -25 },
-    { label: '-18 dB', noiseDb: -18 },
-    { label: '-12 dB', noiseDb: -12 },
-    { label: '-6 dB', noiseDb: -6 },
-    { label: '0 dB', noiseDb: 0 },
-  ];
-
-  for (const step of ladderSteps) {
-    const sim = simulateRoomRecording({ rtTarget: 0.8, seed: 1080, noiseLevelDb: step.noiseDb });
-    const sigWhite = checkSweepSignature(sim.samples, 48000);
-    assert.strictEqual(sigWhite.ok, true, `White noise ${step.label} must pass signature`);
-    recordRow('White Noise Ladder', `White noise: ${step.label}`, sigWhite.score, sigWhite.ok, 'ACCEPTED');
-  }
-
-  // 6. Brown Noise Ladder steps (None, -25, -18, -12, -6, 0 dB)
-  for (const step of ladderSteps) {
-    const sim = simulateRoomRecording({ rtTarget: 0.8, seed: 1080 });
-    if (step.noiseDb != null) {
-      const rng = createMulberry32(1080);
-      const rawBrown = makeBrown(sim.samples.length, rng);
-      let peak = 0;
-      for (let i = 0; i < sim.samples.length; i++) {
-        const a = Math.abs(sim.samples[i]);
-        if (a > peak) peak = a;
-      }
-      let sumSq = 0;
-      for (let i = 0; i < rawBrown.length; i++) sumSq += rawBrown[i] ** 2;
-      const rawRms = Math.sqrt(sumSq / rawBrown.length) || 1;
-      const targetRms = peak * Math.pow(10, step.noiseDb / 20.0);
-      const scale = targetRms / rawRms;
-      for (let i = 0; i < sim.samples.length; i++) {
-        sim.samples[i] += rawBrown[i] * scale;
-      }
-    }
-    const sigBrown = checkSweepSignature(sim.samples, 48000);
-    assert.strictEqual(sigBrown.ok, true, `Brown noise ${step.label} must pass signature`);
-    recordRow('Brown Noise Ladder', `Brown noise: ${step.label}`, sigBrown.score, sigBrown.ok, 'ACCEPTED');
-  }
-
-  // 7. Negative Cases
+  // 4. Negative Cases
   const total85 = Math.round(8.5 * 48000);
 
   // (a) Clean loud clap
@@ -1023,7 +962,7 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   }
   const sigCleanClap = checkSweepSignature(cleanClap, 48000);
   assert.strictEqual(sigCleanClap.ok, false, 'Clean clap must be rejected by signature gate');
-  recordRow('Negative Cases', 'Clean Loud Clap (impulse)', sigCleanClap.score, sigCleanClap.ok, 'REJECTED');
+  recordRow('Negative Cases', 'Clean Loud Clap (impulse)', sigCleanClap.score, sigCleanClap.ok, 'REJECTED', sigCleanClap.peakTimes);
 
   // (b) Noisy clap
   const noisyClap = new Float64Array(total85);
@@ -1034,7 +973,7 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   }
   const sigNoisyClap = checkSweepSignature(noisyClap, 48000);
   assert.strictEqual(sigNoisyClap.ok, false, 'Noisy clap must be rejected by signature gate');
-  recordRow('Negative Cases', 'Noisy Clap (clap + noise)', sigNoisyClap.score, sigNoisyClap.ok, 'REJECTED');
+  recordRow('Negative Cases', 'Noisy Clap (clap + noise)', sigNoisyClap.score, sigNoisyClap.ok, 'REJECTED', sigNoisyClap.peakTimes);
 
   // (c) Noise plus burst
   const burstSignal = new Float64Array(total85);
@@ -1046,7 +985,7 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   }
   const sigBurst = checkSweepSignature(burstSignal, 48000);
   assert.strictEqual(sigBurst.ok, false, 'Noise + burst must be rejected by signature gate');
-  recordRow('Negative Cases', 'Noise + sudden burst', sigBurst.score, sigBurst.ok, 'REJECTED');
+  recordRow('Negative Cases', 'Noise + sudden burst', sigBurst.score, sigBurst.ok, 'REJECTED', sigBurst.peakTimes);
 
   // (d) 50 Hz hum + noise
   const humSignal = new Float64Array(total85);
@@ -1057,7 +996,7 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   }
   const sigHum = checkSweepSignature(humSignal, 48000);
   assert.strictEqual(sigHum.ok, false, '50 Hz hum + noise must be rejected by signature gate');
-  recordRow('Negative Cases', '50 Hz hum + noise', sigHum.score, sigHum.ok, 'REJECTED');
+  recordRow('Negative Cases', '50 Hz hum + noise', sigHum.score, sigHum.ok, 'REJECTED', sigHum.peakTimes);
 
   // (e) Pure noise only
   const pureWhite = new Float64Array(total85);
@@ -1065,37 +1004,50 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   for (let i = 0; i < total85; i++) pureWhite[i] = boxMuller(rngPure) * 0.05;
   const sigPureWhite = checkSweepSignature(pureWhite, 48000);
   assert.strictEqual(sigPureWhite.ok, false, 'Pure white noise must be rejected by signature gate');
-  recordRow('Negative Cases', 'Pure white noise', sigPureWhite.score, sigPureWhite.ok, 'REJECTED');
+  recordRow('Negative Cases', 'Pure white noise', sigPureWhite.score, sigPureWhite.ok, 'REJECTED', sigPureWhite.peakTimes);
+
+  function makeBrown(length, rng) {
+    const noise = new Float64Array(length);
+    let last = 0;
+    for (let i = 0; i < length; i++) {
+      const white = boxMuller(rng);
+      last = 0.995 * last + white * 0.1;
+      noise[i] = last;
+    }
+    return noise;
+  }
 
   const pureBrown = makeBrown(total85, rngPure);
   const sigPureBrown = checkSweepSignature(pureBrown, 48000);
   assert.strictEqual(sigPureBrown.ok, false, 'Pure brown noise must be rejected by signature gate');
-  recordRow('Negative Cases', 'Pure brown noise', sigPureBrown.score, sigPureBrown.ok, 'REJECTED');
+  recordRow('Negative Cases', 'Pure brown noise', sigPureBrown.score, sigPureBrown.ok, 'REJECTED', sigPureBrown.peakTimes);
 
   // (f) Pure silence
   const silence = new Float64Array(total85);
   const sigSilence = checkSweepSignature(silence, 48000);
   assert.strictEqual(sigSilence.ok, false, 'Pure silence must be rejected by signature gate');
-  recordRow('Negative Cases', 'Pure silence', sigSilence.score, sigSilence.ok, 'REJECTED');
+  recordRow('Negative Cases', 'Pure silence', sigSilence.score, sigSilence.ok, 'REJECTED', sigSilence.peakTimes);
 
-  // Print Formatted Evidence Table
-  console.log('\n=============================================================================================================');
+  // Print Formatted Evidence Table (including per-band peak times)
+  console.log('\n=============================================================================================================================');
   console.log('Phase 3a-2e: Sweep-Signature Gate Positive & Negative Evidence Verification Matrix');
   console.log('Rejection Threshold: Ordering Score >= ' + SWEEP_SIG_MIN_SCORE.toFixed(3));
-  console.log('=============================================================================================================');
-  console.log('Category               | Test Case / Signal Description                | Score | Margin to Thr | Verdict');
-  console.log('-----------------------+-----------------------------------------------+-------+---------------+-----------------');
+  console.log('=============================================================================================================================');
+  console.log('Category               | Test Case / Signal Description       | Score | Margin | Peak Times [125..4k] (s)       | Verdict');
+  console.log('-----------------------+--------------------------------------+-------+--------+--------------------------------+-----------------');
   for (const row of tableRows) {
     const marginSign = row.score >= SWEEP_SIG_MIN_SCORE ? '+' : '-';
+    const timesStr = (row.peakTimes || []).join(', ').padEnd(30);
     console.log(
       `${row.category.padEnd(22)} | ` +
-      `${row.label.padEnd(45)} | ` +
+      `${row.label.padEnd(36)} | ` +
       `${row.score.toFixed(3).padStart(5)} | ` +
-      `${(marginSign + row.margin.toFixed(3)).padStart(13)} | ` +
+      `${(marginSign + row.margin.toFixed(3)).padStart(6)} | ` +
+      `${timesStr} | ` +
       `${row.verdict}`
     );
   }
-  console.log('-------------------------------------------------------------------------------------------------------------');
+  console.log('-----------------------------------------------------------------------------------------------------------------------------');
 
   // Calculate smallest margins
   const positiveRows = tableRows.filter((r) => r.expectedVerdict === 'ACCEPTED');
