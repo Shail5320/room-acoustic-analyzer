@@ -1,0 +1,66 @@
+scenario                                                   expect  | CURRENT gate           | TEMPLATE gate
+----------------------------------------------------------------------------------------------------------------------------------
+clean room (RT60 0.8 s)                                    ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  44.6 dB
+clean room RT60 0.3 s                                      ACCEPT  | ACCEPT score=0.926       | ACCEPT 6/6 t_start= 1.00 min_margin=  46.4 dB
+clean room RT60 1.5 s                                      ACCEPT  | ACCEPT score=0.905       | ACCEPT 6/6 t_start= 1.00 min_margin=  42.0 dB
+sweep at offset 0.5 s in a 30 s recording                  ACCEPT  | ACCEPT score=0.908       | ACCEPT 6/6 t_start= 0.50 min_margin= 187.3 dB
+sweep at offset 3.0 s in a 30 s recording                  ACCEPT  | ACCEPT score=0.937       | ACCEPT 6/6 t_start= 3.00 min_margin= 189.9 dB
+sweep at offset 10.0 s in a 30 s recording                 ACCEPT  | ACCEPT score=0.849       | ACCEPT 6/6 t_start=10.00 min_margin= 190.0 dB
+sweep at offset 20.0 s in a 30 s recording                 ACCEPT  | ACCEPT score=0.956       | ACCEPT 6/6 t_start=20.00 min_margin= 189.7 dB
+LF thump +0 dB re sweep (250 Hz band), start 0.3 s         ACCEPT  | REJECT score=0.599 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+LF thump +0 dB re sweep (250 Hz band), middle 3 s          ACCEPT  | REJECT score=0.555 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  44.6 dB
+LF thump +0 dB re sweep (250 Hz band), end 7.5 s           ACCEPT  | REJECT score=0.599 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+LF thump +6 dB re sweep (250 Hz band), start 0.3 s         ACCEPT  | REJECT score=0.383 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+LF thump +6 dB re sweep (250 Hz band), middle 3 s          ACCEPT  | REJECT score=0.555 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  44.6 dB
+LF thump +6 dB re sweep (250 Hz band), end 7.5 s           ACCEPT  | REJECT score=0.080 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+LF thump +12 dB re sweep (250 Hz band), start 0.3 s        ACCEPT  | REJECT score=0.383 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+LF thump +12 dB re sweep (250 Hz band), middle 3 s         ACCEPT  | REJECT score=0.400 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  44.6 dB
+LF thump +12 dB re sweep (250 Hz band), end 7.5 s          ACCEPT  | REJECT score=0.080 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+LF thump +20 dB re sweep (250 Hz band), start 0.3 s        ACCEPT  | REJECT score=0.303 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+LF thump +20 dB re sweep (250 Hz band), middle 3 s         ACCEPT  | REJECT score=0.400 WRONG | ACCEPT 6/6 t_start= 1.01 min_margin=  44.5 dB
+LF thump +20 dB re sweep (250 Hz band), end 7.5 s          ACCEPT  | REJECT score=0.080 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  43.0 dB
+broadband knock +0 dB re sweep (1 kHz band), 2.5 s         ACCEPT  | REJECT score=0.240 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  44.6 dB
+broadband knock +6 dB re sweep (1 kHz band), 2.5 s         ACCEPT  | REJECT score=0.194 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  44.6 dB
+broadband knock +12 dB re sweep (1 kHz band), 2.5 s        ACCEPT  | REJECT score=0.194 WRONG | ACCEPT 6/6 t_start= 1.00 min_margin=  44.6 dB
+phone-speaker HPF 150 Hz + brown rumble None dB            ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  49.8 dB
+phone-speaker HPF 150 Hz + brown rumble -10 dB             ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  38.9 dB
+phone-speaker HPF 150 Hz + brown rumble 0 dB               ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  30.3 dB
+phone-speaker HPF 250 Hz + brown rumble None dB            ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  51.0 dB
+phone-speaker HPF 250 Hz + brown rumble -10 dB             ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  29.7 dB
+phone-speaker HPF 250 Hz + brown rumble 0 dB               ACCEPT  | ACCEPT score=0.908       | ACCEPT 6/6 t_start= 1.00 min_margin=  21.2 dB
+phone-speaker HPF 350 Hz + brown rumble None dB            ACCEPT  | ACCEPT score=0.912       | ACCEPT 6/6 t_start= 1.00 min_margin=  45.3 dB
+phone-speaker HPF 350 Hz + brown rumble -10 dB             ACCEPT  | ACCEPT score=0.912       | ACCEPT 6/6 t_start= 1.00 min_margin=  30.2 dB
+phone-speaker HPF 350 Hz + brown rumble 0 dB               ACCEPT  | ACCEPT score=0.912       | ACCEPT 6/6 t_start= 1.00 min_margin=  17.8 dB
+phone-speaker HPF 500 Hz + brown rumble None dB            ACCEPT  | ACCEPT score=0.904       | ACCEPT 6/6 t_start= 1.00 min_margin=  39.4 dB
+phone-speaker HPF 500 Hz + brown rumble -10 dB             ACCEPT  | ACCEPT score=0.904       | ACCEPT 6/6 t_start= 1.00 min_margin=  25.1 dB
+phone-speaker HPF 500 Hz + brown rumble 0 dB               ACCEPT  | ACCEPT score=0.904       | ACCEPT 6/6 t_start= 1.00 min_margin=  13.5 dB
+mains hum + harmonics -20 dB re sweep RMS                  ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  42.5 dB
+mains hum + harmonics +0 dB re sweep RMS                   ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  22.2 dB
+mains hum + harmonics +6 dB re sweep RMS                   ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  16.6 dB
+white noise -10 dB re sweep RMS                            ACCEPT  | ACCEPT score=0.899       | ACCEPT 6/6 t_start= 1.00 min_margin=  36.4 dB
+white noise +0 dB re sweep RMS                             ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  26.6 dB
+white noise +3 dB re sweep RMS                             ACCEPT  | ACCEPT score=0.899       | ACCEPT 6/6 t_start= 1.00 min_margin=  23.6 dB
+sweep played twice back to back                            ACCEPT  | ACCEPT score=0.903       | ACCEPT 6/6 t_start= 1.00 min_margin=  41.6 dB
+clean clap, no sweep                                       REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-2.86 min_margin=-180.0 dB
+clap x0.2 + white noise sigma 0.001                        REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-2.86 min_margin= -99.0 dB
+clap x0.8 + white noise sigma 0.001                        REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-2.86 min_margin= -99.0 dB
+clap x0.2 + white noise sigma 0.005                        REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-2.84 min_margin= -99.0 dB
+clap x0.8 + white noise sigma 0.005                        REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-2.77 min_margin= -99.0 dB
+clap x0.2 + white noise sigma 0.02                         REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-2.86 min_margin= -99.0 dB
+clap x0.8 + white noise sigma 0.02                         REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-2.84 min_margin= -99.0 dB
+noise only (seed 0)                                        REJECT  | REJECT score=0.504       | REJECT 0/6 t_start= 1.38 min_margin=  -0.8 dB
+noise only (seed 1)                                        REJECT  | REJECT score=0.240       | REJECT 0/6 t_start=-0.60 min_margin=  -0.2 dB
+noise only (seed 2)                                        REJECT  | REJECT score=0.337       | REJECT 0/6 t_start= 0.57 min_margin=  -0.2 dB
+noise only (seed 3)                                        REJECT  | REJECT score=0.173       | REJECT 0/6 t_start= 0.71 min_margin=  -0.5 dB
+noise only (seed 4)                                        REJECT  | REJECT score=0.466       | REJECT 0/6 t_start=-1.04 min_margin= -99.0 dB
+silence                                                    REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-5.00 min_margin= -99.0 dB
+brown noise only                                           REJECT  | REJECT score=0.160       | REJECT 0/6 t_start= 1.06 min_margin=  -0.6 dB
+mains hum + harmonics + noise, no sweep                    REJECT  | REJECT score=0.519       | REJECT 0/6 t_start= 1.13 min_margin=  -0.4 dB
+noise + loud burst, no sweep                               REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-1.85 min_margin= -99.0 dB
+speech-like modulated tones, no sweep                      REJECT  | REJECT score=0.269       | REJECT 0/6 t_start=-1.42 min_margin= -99.0 dB
+two claps 1.5 s apart                                      REJECT  | REJECT score=0.080       | REJECT 0/6 t_start=-1.36 min_margin= -99.0 dB
+rising broadband noise (fan spin-up)                       REJECT  | REJECT score=0.205       | REJECT 0/6 t_start= 2.84 min_margin=  -0.2 dB
+DOWN sweep (wrong direction)                               REJECT  | REJECT score=0.000       | REJECT 0/6 t_start=-3.96 min_margin= -99.0 dB
+FAST 2 s sweep (wrong rate)                                REJECT  | REJECT score=0.646       | REJECT 2/6 t_start=-1.99 min_margin= -99.0 dB
+----------------------------------------------------------------------------------------------------------------------------------
+Correct decisions: CURRENT 47/62   TEMPLATE 62/62
