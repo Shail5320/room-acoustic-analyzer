@@ -1,6 +1,6 @@
 // EchoMap Service Worker
 // Cache version identifier — update this when modifying cached assets
-const CACHE_NAME = 'echomap-v12';
+const CACHE_NAME = 'echomap-v13';
 
 // All paths are relative to support hosting under repository subpaths (e.g., GitHub Pages)
 const PRECACHE_ASSETS = [

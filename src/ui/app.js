@@ -1461,6 +1461,9 @@ export async function initApp() {
     if (r.includes('sweep not detected') || r.includes('pnr')) {
       return 'The test sweep could not be detected above background noise. Ensure playback volume is adequate, place the speaker at a fixed position, and turn off background noise sources.';
     }
+    if (r.includes("couldn't confirm") || r.includes('expected frequency bands') || r.includes('template')) {
+      return 'Check that the complete test sweep played clearly in full and that recording started before playback began.';
+    }
     return 'Please verify that the audio file was recorded cleanly with the test sweep playing, and try again.';
   }
 
@@ -1536,10 +1539,12 @@ export async function initApp() {
       // Ensure rejection does not claim a clap unless evidence specifically supports it (neutral wording when cause is unclear)
       let rejectMsg = result.rejectReason || 'Analysis failed';
       if (rejectMsg.toLowerCase().includes('clap')) {
-        const sig = result.sweepSignature || (result.diagnostics ? result.diagnostics : null);
-        const isClapEvident = sig && (sig.totalSpan != null && sig.totalSpan < 0.20) && (sig.monotonicCount === 0);
+        const isClapEvident = result.templateGate
+          ? Boolean(result.templateGate.isClap)
+          : Boolean(result.sweepSignature && result.sweepSignature.totalSpan != null && result.sweepSignature.totalSpan < 0.20);
         if (!isClapEvident) {
-          rejectMsg = "This doesn't look like the EchoMap test sweep. Play the downloaded sweep.";
+          const matched = result.matchedBands ?? (result.templateGate ? result.templateGate.matchedBands : 0);
+          rejectMsg = `Couldn't confirm the EchoMap test sweep (found ${matched} of 6 expected frequency bands at the expected times). Check the sweep played in full and that recording started before it.`;
         }
       }
 
@@ -1554,9 +1559,9 @@ export async function initApp() {
           pnrThresholdDb: 20.0,
           deltaPostPreDb: result.deltaPostPreDb,
           deltaPostPreThresholdDb: 1.5,
-          orderingScore: result.sweepSignature ? result.sweepSignature.score : null,
-          orderingThreshold: 0.65,
-          peakTimes: result.sweepSignature ? result.sweepSignature.peakTimes : null,
+          tStart: result.tStart != null ? result.tStart : (result.templateGate ? result.templateGate.tStart : null),
+          matchedBands: result.matchedBands != null ? result.matchedBands : (result.templateGate ? result.templateGate.matchedBands : null),
+          perBandMarginDb: result.perBandMarginDb || (result.templateGate ? result.templateGate.perBandMarginDb : null),
           sampleRate: audioMeta.sampleRate || result.sampleRate,
           durationS: audioMeta.durationS || (audioMeta.samples ? audioMeta.samples.length / (audioMeta.sampleRate || 48000) : result.durationS),
           gateFired: result.gateFired || result.rejectReason || 'Rejection gate',
@@ -1578,9 +1583,9 @@ export async function initApp() {
         pnrThresholdDb: 20.0,
         deltaPostPreDb: result.deltaPostPreDb,
         deltaPostPreThresholdDb: 1.5,
-        orderingScore: result.sweepSignature ? result.sweepSignature.score : null,
-        orderingThreshold: 0.65,
-        peakTimes: result.sweepSignature ? result.sweepSignature.peakTimes : null,
+        tStart: result.tStart != null ? result.tStart : (result.templateGate ? result.templateGate.tStart : null),
+        matchedBands: result.matchedBands != null ? result.matchedBands : (result.templateGate ? result.templateGate.matchedBands : null),
+        perBandMarginDb: result.perBandMarginDb || (result.templateGate ? result.templateGate.perBandMarginDb : null),
         sampleRate: audioMeta.sampleRate || result.sampleRate,
         durationS: audioMeta.durationS || (audioMeta.samples ? audioMeta.samples.length / (audioMeta.sampleRate || 48000) : result.durationS),
         gateFired: result.gateFired || 'None (All gates passed)',

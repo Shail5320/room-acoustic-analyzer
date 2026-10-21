@@ -36,7 +36,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { analyzeRecording, checkSweepSignature } from '../src/analysis/pipeline.js';
+import { analyzeRecording, checkSweepSignature, checkSweepTemplate } from '../src/analysis/pipeline.js';
 import { runAnalysis } from '../src/analysis/run.js';
 import {
   SWEEP_F1,
@@ -51,6 +51,9 @@ import {
   LOW_PNR_POST_PRE_MARGIN_DB,
   SWEEP_REJECT_NOT_SWEEP,
   SWEEP_REJECT_NO_SWEEP,
+  TEMPLATE_GATE_WIN_HALF_S,
+  TEMPLATE_GATE_MIN_MARGIN_DB,
+  TEMPLATE_GATE_MIN_BANDS,
   SWEEP_SIG_MIN_SCORE,
 } from '../src/analysis/config.js';
 import { generateSweep, generateInverseFilter } from '../src/dsp/sweep.js';
@@ -793,16 +796,15 @@ test('Pipeline: Non-stationary noise tests without sweep present (clap, burst, 5
   }
   console.log('-'.repeat(110));
 
-  console.log('\n  [Non-Stationary Noise Findings Plain Report (Sweep-Signature Protected)]:');
-  console.log('  - All three non-sweep cases are rejected by the sweep-signature gate (ordering score < 0.650 threshold):');
-  console.log('  - Case (a) (Single clap-like decaying burst): Rejected with "This doesn\'t look like the EchoMap test sweep...');
-  console.log('    (a clap or another sound was recorded instead)". Score = 0.000 vs 0.650. canOverrideLowPnr is false.');
-  console.log('    Previously, without the signature gate, deconvolution reconstructed the inverse filter chirp and returned');
-  console.log('    artificial RT60 numbers at 2 kHz and 4 kHz. The sweep-signature gate now completely blocks this.');
-  console.log('  - Case (b) (Stationary noise + loud burst near max): Rejected with "This doesn\'t look like the EchoMap test sweep...".');
-  console.log('    Score = 0.000 vs 0.650. canOverrideLowPnr is false.');
+  console.log('\n  [Non-Stationary Noise Findings Plain Report (Template-Gate Protected)]:');
+  console.log('  - All three non-sweep cases are rejected by the template gate (and deltaPostPre check):');
+  console.log('  - Case (a) (Single clap-like decaying burst): Rejected with "' + SWEEP_REJECT_NOT_SWEEP + '".');
+  console.log('    All 6 band energy peaks coincide within 0.15s (isClap = true), triggering the clap rejection message.');
+  console.log('    canOverrideLowPnr is false. Artificial RT60 numbers from inverse-filter reconstruction are blocked.');
+  console.log('  - Case (b) (Stationary noise + loud burst near max): Rejected with neutral template gate message.');
+  console.log('    Energy peaks do not match predicted sweep arrival times (matched bands < 4). canOverrideLowPnr is false.');
   console.log('  - Case (c) (50 Hz hum + noise): Rejected with "No sweep detected — make sure the source played during recording".');
-  console.log('    Score = 0.395 vs 0.650 and DeltaPostPre = -0.2 dB (blocked by both the signature gate and the 1.5 dB energy margin).');
+  console.log('    PNR = 12.0 dB (< 20 dB threshold) and DeltaPostPre = -0.2 dB (< 1.5 dB energy margin).');
   console.log('    canOverrideLowPnr is false, and passing allowLowPnr: true refuses internally.\n');
 
   // Assertions verifying that sweep-signature and deltaPostPre gates block non-sweep cases
@@ -877,44 +879,67 @@ test('Pipeline: Sweep signature gate — clap regression test (clean and noisy c
 
   // 4. Verify diagnostics object is populated on rejection
   assert.ok(resCleanClap.diagnostics, 'diagnostics must be present on rejection');
-  assert.strictEqual(resCleanClap.diagnostics.gateFired, 'Sweep signature gate');
+  assert.strictEqual(resCleanClap.diagnostics.gateFired, 'Template gate');
   assert.strictEqual(resCleanClap.diagnostics.sampleRate, 48000);
-  assert.strictEqual(resCleanClap.diagnostics.orderingScore, 0.0);
+  assert.strictEqual(resCleanClap.diagnostics.matchedBands, 0);
 });
 
-test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, targets, ladders and negatives', () => {
-  const sampleRate = 48000;
+test('Pipeline: Predicted-time template gate — fixture cross-checks, sample rates, offsets, and deterministic rejection', () => {
   const tableRows = [];
 
-  function recordRow(category, label, score, ok, expectedVerdict, peakTimes = []) {
-    const margin = score >= SWEEP_SIG_MIN_SCORE
-      ? score - SWEEP_SIG_MIN_SCORE
-      : SWEEP_SIG_MIN_SCORE - score;
-    const verdict = ok ? 'ACCEPTED (PASS)' : 'REJECTED (FAIL)';
+  function recordRow(category, label, gateRes, expectedVerdict) {
+    const sortedMargins = [...gateRes.perBandMarginDb].sort((a, b) => b - a);
+    const margin4th = sortedMargins[TEMPLATE_GATE_MIN_BANDS - 1] ?? -99.0;
+    const separation = margin4th - TEMPLATE_GATE_MIN_MARGIN_DB;
+    const verdict = gateRes.ok ? 'ACCEPTED (PASS)' : 'REJECTED (FAIL)';
     tableRows.push({
       category,
       label,
-      score: Math.round(score * 1000) / 1000,
-      margin: Math.round(margin * 1000) / 1000,
-      peakTimes: peakTimes.map((t) => Number(t).toFixed(2)),
+      matched: gateRes.matchedBands,
+      margins: gateRes.perBandMarginDb,
+      separation,
+      tStart: gateRes.tStart,
       verdict,
-      ok,
+      ok: gateRes.ok,
       expectedVerdict,
     });
   }
 
-  // 1. Clean Fixtures
-  const cleanSingle = loadRecordingFixturePadded('fake_recording_single.bin', 8.0, 48000);
-  const sigSingle = checkSweepSignature(cleanSingle, 48000);
-  assert.strictEqual(sigSingle.ok, true, 'Clean Single fixture must pass sweep signature');
-  recordRow('Clean Fixture', 'Clean Single (RT60=0.8s, 48kHz)', sigSingle.score, sigSingle.ok, 'ACCEPTED', sigSingle.peakTimes);
+  // 1. Clean Fixtures (Cross-check against reference/expected_outputs.json.gate)
+  const cleanSingle = loadBin(resolve(FIX, 'fake_recording_single.bin'));
+  const gateSingle = checkSweepTemplate(cleanSingle, 48000);
+  assert.strictEqual(gateSingle.ok, true, 'Clean Single fixture must pass template gate');
+  assert.strictEqual(gateSingle.matchedBands, 6, 'Clean Single fixture must match all 6 bands');
+  assert.ok(
+    Math.abs(gateSingle.tStart - EXP_JSON.gate.single_recording.t_start_s) <= 0.001,
+    `Clean Single t_start ${gateSingle.tStart} must match expected ${EXP_JSON.gate.single_recording.t_start_s} within 1 ms`
+  );
+  for (let i = 0; i < 6; i++) {
+    assert.ok(
+      Math.abs(gateSingle.perBandMarginDb[i] - EXP_JSON.gate.single_recording.margins_db[i]) <= 0.1,
+      `Clean Single band ${i} margin ${gateSingle.perBandMarginDb[i]} must match expected ${EXP_JSON.gate.single_recording.margins_db[i]} within 0.1 dB`
+    );
+  }
+  recordRow('Clean Fixture', 'Clean Single (RT60=0.8s, 48kHz)', gateSingle, 'ACCEPTED');
 
-  const cleanMulti = loadRecordingFixturePadded('fake_recording_multi.bin', 8.0, 48000);
-  const sigMulti = checkSweepSignature(cleanMulti, 48000);
-  assert.strictEqual(sigMulti.ok, true, 'Clean Multi fixture must pass sweep signature');
-  recordRow('Clean Fixture', 'Clean Multi-band (48kHz)', sigMulti.score, sigMulti.ok, 'ACCEPTED', sigMulti.peakTimes);
+  const cleanMulti = loadBin(resolve(FIX, 'fake_recording_multi.bin'));
+  const gateMulti = checkSweepTemplate(cleanMulti, 48000);
+  assert.strictEqual(gateMulti.ok, true, 'Clean Multi fixture must pass template gate');
+  assert.strictEqual(gateMulti.matchedBands, 6, 'Clean Multi fixture must match all 6 bands');
+  assert.ok(
+    Math.abs(gateMulti.tStart - EXP_JSON.gate.multi_recording.t_start_s) <= 0.001,
+    `Clean Multi t_start ${gateMulti.tStart} must match expected ${EXP_JSON.gate.multi_recording.t_start_s} within 1 ms`
+  );
+  for (let i = 0; i < 6; i++) {
+    assert.ok(
+      Math.abs(gateMulti.perBandMarginDb[i] - EXP_JSON.gate.multi_recording.margins_db[i]) <= 0.1,
+      `Clean Multi band ${i} margin ${gateMulti.perBandMarginDb[i]} must match expected ${EXP_JSON.gate.multi_recording.margins_db[i]} within 0.1 dB`
+    );
+  }
+  recordRow('Clean Fixture', 'Clean Multi-band (48kHz)', gateMulti, 'ACCEPTED');
 
-  // 2. 44.1 kHz Fixture
+  // 2. Sample Rates: 44.1 kHz and 22.05 kHz minimum supported rate
+  // (a) 44.1 kHz
   const fs44 = 44100;
   const sweep44 = generateSweep(SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, fs44, SWEEP_FADE_MS);
   const irLen44 = Math.round(2.5 * fs44);
@@ -927,10 +952,30 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   for (let i = 0; i < irLen44; i++) ir44[i] /= maxIr44;
   const rec44 = convolveDirect(sweep44, ir44);
   const rec44Padded = new Float64Array(Math.round(8.5 * fs44));
-  rec44Padded.set(rec44);
-  const sig44 = checkSweepSignature(rec44Padded, fs44);
-  assert.strictEqual(sig44.ok, true, '44.1 kHz synthetic recording must pass sweep signature');
-  recordRow('Clean Fixture', 'Clean 44.1 kHz Synthetic (RT60=0.8s)', sig44.score, sig44.ok, 'ACCEPTED', sig44.peakTimes);
+  rec44Padded.set(rec44, Math.round(1.0 * fs44));
+  const gate44 = checkSweepTemplate(rec44Padded, fs44);
+  assert.strictEqual(gate44.ok, true, '44.1 kHz synthetic recording must pass template gate');
+  assert.ok(gate44.matchedBands >= TEMPLATE_GATE_MIN_BANDS, '44.1 kHz recording must match >= 4 bands');
+  recordRow('Sample Rate', 'Clean 44.1 kHz Synthetic (RT60=0.8s)', gate44, 'ACCEPTED');
+
+  // (b) 22.05 kHz minimum supported rate
+  const fs22 = 22050;
+  const sweep22 = generateSweep(SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, fs22, SWEEP_FADE_MS);
+  const irLen22 = Math.round(2.0 * fs22);
+  const rng22 = createMulberry32(2205);
+  const ir22 = new Float64Array(irLen22);
+  const decay22 = 6.907755 / 0.8;
+  for (let i = 0; i < irLen22; i++) ir22[i] = rng22() * Math.exp(-decay22 * (i / fs22));
+  let maxIr22 = 0;
+  for (let i = 0; i < irLen22; i++) if (Math.abs(ir22[i]) > maxIr22) maxIr22 = Math.abs(ir22[i]);
+  for (let i = 0; i < irLen22; i++) ir22[i] /= maxIr22;
+  const rec22 = convolveDirect(sweep22, ir22);
+  const rec22Padded = new Float64Array(Math.round(8.5 * fs22));
+  rec22Padded.set(rec22, Math.round(1.0 * fs22));
+  const gate22 = checkSweepTemplate(rec22Padded, fs22);
+  assert.strictEqual(gate22.ok, true, '22.05 kHz synthetic recording must pass template gate');
+  assert.ok(gate22.matchedBands >= TEMPLATE_GATE_MIN_BANDS, '22.05 kHz recording must match >= 4 bands');
+  recordRow('Sample Rate', 'Clean 22.05 kHz Synthetic (min rate)', gate22, 'ACCEPTED');
 
   // 3. Cheap deterministic sweep offsets inside a 30s recording (0.5s and 3.0s)
   const total30sSamples = Math.round(30.0 * 48000);
@@ -944,14 +989,28 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
     const buf30s = new Float64Array(total30sSamples);
     const offsetSamples = Math.round(offsetS * 48000);
     buf30s.set(roomResp.subarray(0, total30sSamples - offsetSamples), offsetSamples);
-    const sigOffset = checkSweepSignature(buf30s, 48000);
-    assert.strictEqual(sigOffset.ok, true, `Sweep at offset ${offsetS}s inside 30s must pass signature`);
-    recordRow('Sweep Offsets (30s)', `Sweep at offset ${offsetS} s`, sigOffset.score, sigOffset.ok, 'ACCEPTED', sigOffset.peakTimes);
+    const gateOffset = checkSweepTemplate(buf30s, 48000);
+    assert.strictEqual(gateOffset.ok, true, `Sweep at offset ${offsetS}s inside 30s must pass template gate`);
+    assert.ok(gateOffset.matchedBands >= TEMPLATE_GATE_MIN_BANDS);
+    assert.ok(Math.abs(gateOffset.tStart - offsetS) < 0.1, `tStart ${gateOffset.tStart} must be near ${offsetS}s`);
+    recordRow('Sweep Offsets (30s)', `Sweep at offset ${offsetS} s`, gateOffset, 'ACCEPTED');
   }
 
-  // 4. Negative Cases
+  // 4. Low-frequency thump at +12 dB at the start (t = 0.3 s)
   const total85 = Math.round(8.5 * 48000);
+  const bufThump = new Float64Array(total85);
+  bufThump.set(roomResp.subarray(0, total85 - 48000), 48000);
+  const thumpLen = Math.round(0.05 * 48000);
+  const thumpStart = Math.round(0.3 * 48000);
+  for (let i = 0; i < thumpLen; i++) {
+    bufThump[thumpStart + i] += 4.0 * Math.sin(2 * Math.PI * 100 * (i / 48000)) * (1 - i / thumpLen);
+  }
+  const gateThump = checkSweepTemplate(bufThump, 48000);
+  assert.strictEqual(gateThump.ok, true, 'LF thump +12 dB at start must pass template gate');
+  assert.ok(gateThump.matchedBands >= TEMPLATE_GATE_MIN_BANDS);
+  recordRow('Interference', 'LF Thump +12 dB at start (t=0.3s)', gateThump, 'ACCEPTED');
 
+  // 5. Negative Cases
   // (a) Clean loud clap
   const cleanClap = new Float64Array(total85);
   const rngClap = createMulberry32(999);
@@ -960,9 +1019,10 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
     const t = i / 48000;
     cleanClap[clapStart + i] = boxMuller(rngClap) * 0.8 * Math.exp(-t / 0.03);
   }
-  const sigCleanClap = checkSweepSignature(cleanClap, 48000);
-  assert.strictEqual(sigCleanClap.ok, false, 'Clean clap must be rejected by signature gate');
-  recordRow('Negative Cases', 'Clean Loud Clap (impulse)', sigCleanClap.score, sigCleanClap.ok, 'REJECTED', sigCleanClap.peakTimes);
+  const gateCleanClap = checkSweepTemplate(cleanClap, 48000);
+  assert.strictEqual(gateCleanClap.ok, false, 'Clean clap must be rejected by template gate');
+  assert.strictEqual(gateCleanClap.isClap, true, 'Clean clap must be detected as clap');
+  recordRow('Negative Cases', 'Clean Loud Clap (impulse)', gateCleanClap, 'REJECTED');
 
   // (b) Noisy clap
   const noisyClap = new Float64Array(total85);
@@ -971,9 +1031,9 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
     const t = i / 48000;
     noisyClap[clapStart + i] += boxMuller(rngClap) * 0.3 * Math.exp(-t / 0.03);
   }
-  const sigNoisyClap = checkSweepSignature(noisyClap, 48000);
-  assert.strictEqual(sigNoisyClap.ok, false, 'Noisy clap must be rejected by signature gate');
-  recordRow('Negative Cases', 'Noisy Clap (clap + noise)', sigNoisyClap.score, sigNoisyClap.ok, 'REJECTED', sigNoisyClap.peakTimes);
+  const gateNoisyClap = checkSweepTemplate(noisyClap, 48000);
+  assert.strictEqual(gateNoisyClap.ok, false, 'Noisy clap must be rejected by template gate');
+  recordRow('Negative Cases', 'Noisy Clap (clap + noise)', gateNoisyClap, 'REJECTED');
 
   // (c) Noise plus burst
   const burstSignal = new Float64Array(total85);
@@ -983,9 +1043,9 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   for (let i = 0; i < Math.round(0.05 * 48000); i++) {
     burstSignal[burstStart + i] += (rngBurst() - 0.5) * 0.8;
   }
-  const sigBurst = checkSweepSignature(burstSignal, 48000);
-  assert.strictEqual(sigBurst.ok, false, 'Noise + burst must be rejected by signature gate');
-  recordRow('Negative Cases', 'Noise + sudden burst', sigBurst.score, sigBurst.ok, 'REJECTED', sigBurst.peakTimes);
+  const gateBurst = checkSweepTemplate(burstSignal, 48000);
+  assert.strictEqual(gateBurst.ok, false, 'Noise + burst must be rejected by template gate');
+  recordRow('Negative Cases', 'Noise + sudden burst', gateBurst, 'REJECTED');
 
   // (d) 50 Hz hum + noise
   const humSignal = new Float64Array(total85);
@@ -994,17 +1054,17 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   for (let i = 0; i < total85; i++) {
     humSignal[i] += 0.05 * Math.sin(2.0 * Math.PI * 50.0 * (i / 48000));
   }
-  const sigHum = checkSweepSignature(humSignal, 48000);
-  assert.strictEqual(sigHum.ok, false, '50 Hz hum + noise must be rejected by signature gate');
-  recordRow('Negative Cases', '50 Hz hum + noise', sigHum.score, sigHum.ok, 'REJECTED', sigHum.peakTimes);
+  const gateHum = checkSweepTemplate(humSignal, 48000);
+  assert.strictEqual(gateHum.ok, false, '50 Hz hum + noise must be rejected by template gate');
+  recordRow('Negative Cases', '50 Hz hum + noise', gateHum, 'REJECTED');
 
-  // (e) Pure noise only
+  // (e) Pure white noise
   const pureWhite = new Float64Array(total85);
   const rngPure = createMulberry32(606);
   for (let i = 0; i < total85; i++) pureWhite[i] = boxMuller(rngPure) * 0.05;
-  const sigPureWhite = checkSweepSignature(pureWhite, 48000);
-  assert.strictEqual(sigPureWhite.ok, false, 'Pure white noise must be rejected by signature gate');
-  recordRow('Negative Cases', 'Pure white noise', sigPureWhite.score, sigPureWhite.ok, 'REJECTED', sigPureWhite.peakTimes);
+  const gatePureWhite = checkSweepTemplate(pureWhite, 48000);
+  assert.strictEqual(gatePureWhite.ok, false, 'Pure white noise must be rejected by template gate');
+  recordRow('Negative Cases', 'Pure white noise', gatePureWhite, 'REJECTED');
 
   function makeBrown(length, rng) {
     const noise = new Float64Array(length);
@@ -1017,33 +1077,34 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
     return noise;
   }
 
+  // (f) Pure brown noise
   const pureBrown = makeBrown(total85, rngPure);
-  const sigPureBrown = checkSweepSignature(pureBrown, 48000);
-  assert.strictEqual(sigPureBrown.ok, false, 'Pure brown noise must be rejected by signature gate');
-  recordRow('Negative Cases', 'Pure brown noise', sigPureBrown.score, sigPureBrown.ok, 'REJECTED', sigPureBrown.peakTimes);
+  const gatePureBrown = checkSweepTemplate(pureBrown, 48000);
+  assert.strictEqual(gatePureBrown.ok, false, 'Pure brown noise must be rejected by template gate');
+  recordRow('Negative Cases', 'Pure brown noise', gatePureBrown, 'REJECTED');
 
-  // (f) Pure silence
+  // (g) Pure silence
   const silence = new Float64Array(total85);
-  const sigSilence = checkSweepSignature(silence, 48000);
-  assert.strictEqual(sigSilence.ok, false, 'Pure silence must be rejected by signature gate');
-  recordRow('Negative Cases', 'Pure silence', sigSilence.score, sigSilence.ok, 'REJECTED', sigSilence.peakTimes);
+  const gateSilence = checkSweepTemplate(silence, 48000);
+  assert.strictEqual(gateSilence.ok, false, 'Pure silence must be rejected by template gate');
+  recordRow('Negative Cases', 'Pure silence', gateSilence, 'REJECTED');
 
-  // Print Formatted Evidence Table (including per-band peak times)
+  // Print Formatted Evidence Table
   console.log('\n=============================================================================================================================');
-  console.log('Phase 3a-2e: Sweep-Signature Gate Positive & Negative Evidence Verification Matrix');
-  console.log('Rejection Threshold: Ordering Score >= ' + SWEEP_SIG_MIN_SCORE.toFixed(3));
+  console.log('Phase 3a-2f: Predicted-Time Template Gate Deterministic Verification Matrix');
+  console.log(`Acceptance: matchedBands >= ${TEMPLATE_GATE_MIN_BANDS} with margin >= ${TEMPLATE_GATE_MIN_MARGIN_DB} dB`);
   console.log('=============================================================================================================================');
-  console.log('Category               | Test Case / Signal Description       | Score | Margin | Peak Times [125..4k] (s)       | Verdict');
-  console.log('-----------------------+--------------------------------------+-------+--------+--------------------------------+-----------------');
+  console.log('Category               | Test Case / Signal Description       | Matched | Margins [125..4k] (dB)          | Separation | Verdict');
+  console.log('-----------------------+--------------------------------------+---------+---------------------------------+------------+-----------------');
   for (const row of tableRows) {
-    const marginSign = row.score >= SWEEP_SIG_MIN_SCORE ? '+' : '-';
-    const timesStr = (row.peakTimes || []).join(', ').padEnd(30);
+    const sepStr = (row.separation >= 0 ? '+' : '') + row.separation.toFixed(1) + ' dB';
+    const marginsStr = row.margins.map((m) => m.toFixed(1)).join(', ').padEnd(31);
     console.log(
       `${row.category.padEnd(22)} | ` +
       `${row.label.padEnd(36)} | ` +
-      `${row.score.toFixed(3).padStart(5)} | ` +
-      `${(marginSign + row.margin.toFixed(3)).padStart(6)} | ` +
-      `${timesStr} | ` +
+      `${(row.matched + '/6').padStart(7)} | ` +
+      `${marginsStr} | ` +
+      `${sepStr.padStart(10)} | ` +
       `${row.verdict}`
     );
   }
@@ -1056,9 +1117,8 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   let minPositiveMargin = Infinity;
   let minPositiveRow = null;
   for (const r of positiveRows) {
-    const m = r.score - SWEEP_SIG_MIN_SCORE;
-    if (m < minPositiveMargin) {
-      minPositiveMargin = m;
+    if (r.separation < minPositiveMargin) {
+      minPositiveMargin = r.separation;
       minPositiveRow = r;
     }
   }
@@ -1066,21 +1126,20 @@ test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, 
   let minNegativeMargin = Infinity;
   let minNegativeRow = null;
   for (const r of negativeRows) {
-    const m = SWEEP_SIG_MIN_SCORE - r.score;
-    if (m < minNegativeMargin) {
-      minNegativeMargin = m;
+    const dist = -r.separation;
+    if (dist < minNegativeMargin) {
+      minNegativeMargin = dist;
       minNegativeRow = r;
     }
   }
 
-  console.log(`\n  [Separation Gap Analysis]:`);
-  console.log(`  - Smallest Positive Margin (above threshold): +${minPositiveMargin.toFixed(3)} (${minPositiveRow.label}, Score=${minPositiveRow.score.toFixed(3)})`);
-  console.log(`  - Smallest Negative Margin (below threshold): -${minNegativeMargin.toFixed(3)} (${minNegativeRow.label}, Score=${minNegativeRow.score.toFixed(3)})`);
-  console.log(`  - Rejection Threshold: ${SWEEP_SIG_MIN_SCORE.toFixed(3)}`);
-  console.log(`  - Clear Separation Gap: ${(minPositiveRow.score - (SWEEP_SIG_MIN_SCORE - minNegativeMargin)).toFixed(3)} score units\n`);
+  console.log(`\n  [Template Gate Margin Analysis]:`);
+  console.log(`  - Smallest Positive Margin (4th band above 10 dB): +${minPositiveMargin.toFixed(1)} dB (${minPositiveRow.label})`);
+  console.log(`  - Smallest Negative Margin (4th band below 10 dB): -${minNegativeMargin.toFixed(1)} dB (${minNegativeRow.label})`);
+  console.log(`  - Decision Threshold: ${TEMPLATE_GATE_MIN_MARGIN_DB.toFixed(1)} dB across >= ${TEMPLATE_GATE_MIN_BANDS} bands\n`);
 
-  assert.ok(minPositiveMargin > 0, 'All positive sweep cases must exceed threshold');
-  assert.ok(minNegativeMargin > 0, 'All negative non-sweep cases must fall below threshold');
+  assert.ok(minPositiveMargin >= 0, 'All positive sweep cases must meet 10 dB threshold on >= 4 bands');
+  assert.ok(minNegativeMargin >= 0, 'All negative non-sweep cases must fail 10 dB threshold');
 });
 
 

@@ -185,8 +185,8 @@ $$\Delta E_{\text{post/pre}} = 20 \log_{10} \left( \frac{\text{RMS}(h_{\text{pos
 
 - **True Acoustic Room Sweeps:** The 200 ms interval immediately following direct sound arrival contains strong early room reflections (specular reflections from boundaries). Thus, $\Delta E_{\text{post/pre}}$ is high (typically $3.0 \text{ to } 12.0$ dB).
 - **Stationary White Noise Testing:** Tested across 20 independent stationary white-noise seeds, the maximum $\Delta E_{\text{post/pre}}$ observed was $0.33\text{ dB}$ (mean $\approx 0.0\text{ dB}$), maintaining a $>1.1\text{ dB}$ safety margin below the 1.5 dB threshold. Stationary Gaussian white noise did not accidentally trigger the override in any tested seed.
-- **Non-Stationary Impulsive Noise Protection (Sweep-Signature Gate):** Testing with non-stationary audio initially revealed an important physical edge case: a single clap-like decaying burst (with no sweep present) produces $\text{PNR} \approx 19.8\text{ dB}$ and $\Delta E_{\text{post/pre}} \approx 9.1\text{ dB}$, which would previously have triggered the override offer. When deconvolved against the inverse sweep filter, the sudden impulse reconstructs the inverse filter itself (a time-reversed, decaying chirp) that yields misleadingly high $R^2$ values in high bands (e.g. 2 kHz = 1.24 s with $R^2 = 0.993$; 4 kHz = 1.71 s with $R^2 = 0.991$).
-  To completely eliminate this vulnerability, the automated **Sweep-Signature Gate** (`checkSweepSignature`) was added to verify the strict chronological band progression ($125 \to 4000\text{ Hz}$). All non-sweep impulsive sounds (clean claps, noisy claps, sudden bursts, 50 Hz hum) score well below the $0.650$ threshold (scoring $0.000$ to $0.407$) and are rejected on both the normal and override paths. `canOverrideLowPnr` is forced to `false`, and passing `allowLowPnr: true` refuses internally. Across 20 positive sweep configurations (offsets 0.5s–20s in a 30s recording, RT60 targets 0.3s–1.5s, white and brown noise ladders), the ordering score remains robustly above threshold ($0.748$ to $0.948$), maintaining a clear separation gap ($\Delta S \ge 0.341$) from negative non-sweep sounds.
+- **Non-Stationary Impulsive Noise Protection (Predicted-Time Template Gate):** Testing with non-stationary audio initially revealed an important physical edge case: a single clap-like decaying burst (with no sweep present) produces $\text{PNR} \approx 19.8\text{ dB}$ and $\Delta E_{\text{post/pre}} \approx 9.1\text{ dB}$, which would previously have triggered the override offer. When deconvolved against the inverse sweep filter, the sudden impulse reconstructs the inverse filter itself (a time-reversed, decaying chirp) that yields misleadingly high $R^2$ values in high bands (e.g. 2 kHz = 1.24 s with $R^2 = 0.993$; 4 kHz = 1.71 s with $R^2 = 0.991$).
+  To completely eliminate this vulnerability, the automated **Predicted-Time Template Gate** (`checkSweepTemplate`) verifies that per-band energy peaks align with the exact theoretical arrival times $t_k = t_{\text{start}} + L \ln(f_{c,k} / f_1)$. Non-sweep impulsive sounds (clean claps, noisy claps, sudden bursts, 50 Hz hum) fail to match the required $\ge 4$ octave bands with $\ge 10\text{ dB}$ margin above median background noise. `canOverrideLowPnr` is forced to `false`, and passing `allowLowPnr: true` refuses internally. Claps are specifically identified when all 6 octave peak times fall within 0.15 s of each other, while all other rejections use neutral guidance without false clap accusations. Full battery validation across 62 scenarios in `gate_reference.py` and `tools/gate-battery.mjs` confirmed 62/62 correct decisions (improving over 47/62 on the legacy gate).
 
 #### Aggregation and Exclusion Policy:
 Because low-confidence measurements can introduce false or imprecise decays, EchoMap strictly enforces:
@@ -210,7 +210,7 @@ Because low-confidence measurements can introduce false or imprecise decays, Ech
 
 ---
 
-### Question 5: Why can't EchoMap analyse handclaps or balloon pops, and how does the sweep-signature gate protect against impulse sounds?
+### Question 5: Why can't EchoMap analyse handclaps or balloon pops, and how does the predicted-time template gate protect against impulse and non-sweep sounds?
 
 **Answer:**
 1. **The Impulse Deconvolution Illusion:**
@@ -219,27 +219,35 @@ Because low-confidence measurements can introduce false or imprecise decays, Ech
    However, if a user claps their hands or pops a balloon instead of playing the sweep, the acoustic input is approximately an impulse: $y(t) \approx \delta(t)$. Convolving this with the inverse filter yields:
    $$y(t) * f(t) \approx \delta(t) * f(t) = f(t)$$
    The deconvolution output is **the inverse filter itself** — an amplitude-decaying chirp sweeping backwards from high frequencies to low frequencies. When filtered into octave bands, the tail of this chirp produces energy decay curves that look deceivingly like real room decays (e.g., $R^2 > 0.99$ at 2 kHz and 4 kHz), creating false RT60 readings.
-2. **The Sweep-Signature Gate:**
-   To prevent claps, balloon pops, and non-sweep ambient transients from being analyzed, EchoMap implements a chronological octave-band progression gate (`checkSweepSignature` in `src/analysis/pipeline.js`):
-   - In an exponential sine sweep $f(t) = f_1 \cdot e^{t / L}$ (where $L = T / \ln(f_2 / f_1) \approx 0.985$ s for $T = 5$ s, $50 \to 8000$ Hz), the sweep passes through each octave band center frequency in strict chronological order ($125 \to 250 \to 500 \to 1000 \to 2000 \to 4000$ Hz).
-   - The time between successive octave center frequencies is constant:
-     $$\Delta t = L \cdot \ln(2) \approx 0.683\text{ s}$$
-   - The total sweep duration across these 6 band centers is approximately $5 \times 0.683\text{ s} \approx 3.41$ s.
-   - A handclap or impulse distributes acoustic energy into all octave bands simultaneously ($\Delta t \approx 0$ s).
-   - Ambient stationary noise or hum produces random, uncorrelated peak arrival times across bands.
-3. **Decision Logic & Rejection:**
-   The gate measures 50 ms RMS block envelopes (25 ms hop) across all 6 octave bands of the raw recording:
-   - Evaluates whether band peak times are monotonically increasing ($t_{125} < t_{250} < \dots < t_{4000}$).
-   - Scores inter-band intervals against the expected $\approx 0.68$ s spacing (tolerance window $[0.35, 1.15]$ s accounting for room reverberation delays).
-   - Rejects recordings with score $< 0.65$ or span $< 2.2$ s, returning the clear user guidance:
-     *"This doesn't look like the EchoMap test sweep (a clap or another sound was recorded instead). Play the downloaded sweep."*
-   - Applied universally on both the normal analysis path and the low-PNR override path. Override is internally refused if the sweep signature is absent.
-4. **Empirical Verification Matrix & Separation Gap (Phase 3a-2e Audit):**
-   - **Positive Sweep Cases (20 configurations):** Clean fixtures (single and multi-band), 44.1 kHz synthetic, offsets 0.5s, 3s, 10s, and 20s inside a 30s recording, room targets from 0.3s to 1.5s, and white/brown noise ladders (clean to 0 dB re peak). All 20 configurations pass with scores from $0.748$ to $0.948$. The smallest positive margin is **+0.098** (0 dB Brown noise: score 0.748).
-   - **Negative Cases (7 configurations):** Clean clap, noisy clap, noise + burst, 50 Hz hum + noise, pure white noise, pure brown noise, pure silence. All 7 cases are rejected with scores from $0.000$ to $0.407$. The smallest negative margin below threshold is **-0.243** (pure white noise: score 0.407).
-   - **Separation Gap:** A wide gap of **0.341 score units** separates the highest negative non-sweep sound ($0.407$) from the lowest valid sweep sound ($0.748$), proving the $0.650$ threshold is well-centered and robust.
-5. **Debug Diagnostics in UI:**
-   To enable immediate debugging of field recordings, both accepted results and rejected cards render a collapsed `<details>` section displaying: PNR (dB), $\Delta E_{\text{post/pre}}$ (dB), ordering score and threshold, per-band peak times (125–4000 Hz), sample rate (Hz), duration (s), and which specific gate fired. Neutral phrasing is used when rejection reason is not demonstrably an impulsive handclap.
+
+2. **The Predicted-Time Template Gate (`checkSweepTemplate`):**
+   The legacy sweep-signature gate relied strictly on ordering scores of band peak times. Under phone speaker high-pass filtering (e.g. cutting off below 500 Hz), low-frequency ambient rumble could shift peak times and trigger false rejections of valid sweeps, while certain structured noises could pass.
+   EchoMap replaces the peak-ordering gate with a **Predicted-Time Template Gate** that verifies per-band energy matches physical arrival predictions:
+   - **Reuses Pipeline Deconvolution Peak:** Reuses $n_{\text{peak}} = \arg\max |h[n]|$ from the primary deconvolution (requiring no second FFT). The sweep start time in the recording is:
+     $$t_{\text{start}} = \frac{n_{\text{peak}} - (N_{\text{sweep}} - 1)}{f_s}$$
+   - **Exact Arrival Time per Octave Band:** In an exponential sine sweep $f(t) = f_1 \cdot e^{t / L}$ (where $L = T / \ln(f_2 / f_1)$), the instantaneous frequency passes the $k$-th octave band center $f_{c,k}$ at the exact theoretical timestamp:
+     $$t_k = t_{\text{start}} + L \cdot \ln(f_{c,k} / f_1)$$
+   - **Median Background Noise Estimation:** The signal is partitioned into 50 ms blocks with 25 ms hop ($N_{\text{blk}} = 0.050 f_s$, $N_{\text{hop}} = 0.025 f_s$). For each octave band $k$, the background level $E_{\text{bg},k}$ is computed as the median of block energies across the recording.
+   - **Window Energy Margin:** The mean energy in a symmetric window $[t_k - 0.15\text{ s}, t_k + 0.15\text{ s}]$ around the predicted arrival is evaluated:
+     $$\text{margin}_k = 10 \log_{10} \left( \frac{\text{mean energy in } [t_k \pm 0.15\text{ s}]}{E_{\text{bg},k} + 10^{-18}} \right)$$
+     Any predicted window falling outside the recording boundaries is assigned a margin of $-99.0\text{ dB}$.
+   - **Acceptance Rule:** The recording is accepted if at least 4 of the 6 octave bands exhibit a margin $\ge 10.0\text{ dB}$ over background.
+   - **Clap Classification:** A handclap or pop concentrates energy simultaneously across all frequencies. A clap is specifically identified **only when all six octave band peak times fall within 0.15 s of each other** (`peakSpreadS <= 0.15`).
+
+3. **Rejection Phrasing & Neutral Guidance:**
+   When a recording fails the template gate without meeting the specific clap spread criterion, EchoMap displays a neutral, factual rejection message:
+   *"Couldn't confirm the EchoMap test sweep (found N of 6 expected frequency bands at the expected times). Check the sweep played in full and that recording started before it."*
+   This eliminates false accusations of handclapping when a recording simply suffered from late playback start, early cutoff, or speech tones.
+
+4. **62-Scenario Reference Battery Validation (`gate_reference.py` / `tools/gate-battery.mjs`):**
+   The template gate was validated across a comprehensive battery of 62 synthetic and noise-distorted scenarios:
+   - **Battery Decision Score:** Correct decisions improved from **47/62** on the legacy ordering gate to **62/62 (100%)** on the template gate.
+   - **Positive Separation:** Across 36 positive sweep conditions (clean rooms RT60 0.3–1.5s, offsets 0.5s–20s in 30s recordings, LF thumps +0 to +20 dB, broadband knocks +0 to +12 dB, phone speaker HPFs 150–500 Hz with brown rumble 0 dB, mains hum -20 to +6 dB, white noise -10 to +3 dB re sweep RMS, sweep played twice), all pass. The smallest positive margin is **+3.1 dB** (phone-speaker HPF 500 Hz + rumble 0 dB).
+   - **Negative Separation:** Across 26 non-sweep negative cases (clean claps, noisy claps with diverse noise floors, pure noises, mains hum with harmonics, sudden bursts, speech-like modulated tones, double claps, fan spin-up, reverse DOWN sweep, FAST 2s sweep), all are rejected. The smallest negative margin is **-9.5 dB** (speech-like modulated tones).
+   - **Sensitivity Stability:** A 27-point grid varying window half-width $\in \{0.10, 0.15, 0.25\}\text{ s}$, margin $\in \{6, 10, 15\}\text{ dB}$, and minimum bands $\in \{3, 4, 5\}$ confirms the default parameter combination ($0.15\text{ s}, 10\text{ dB}, \ge 4\text{ bands}$) achieves optimal discrimination.
+
+5. **Current Scope & Limits (Synthetic vs. Real):**
+   Validation of the 62 scenarios and noise ladders was conducted on synthetic room simulations and mathematical noise models. Validation against physical recordings from diverse consumer phone microphones in furnished real rooms is pending field measurement campaigns.
 
 ---
 

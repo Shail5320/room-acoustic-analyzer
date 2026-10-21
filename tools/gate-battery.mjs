@@ -1,35 +1,50 @@
 /**
- * tools/gate-battery.mjs — Robustness battery and large-offset verification for sweep-signature gate.
+ * tools/gate-battery.mjs — Comprehensive 62-scenario benchmark and sensitivity audit
+ * for the EchoMap template gate vs legacy sweep-signature gate.
  *
- * Implements Section 1 large-offset cases (10s, 20s in 30s) and Section 2 robustness battery:
- *   a) Sweep with loud broadband thump (louder than sweep in 125-500 Hz) at start, middle, end
- *   b) Sweep through phone-speaker model (high-pass near 150-200 Hz @ 12 dB/oct, roll-off > 6 kHz) + brown rumble
- *   c) Sweep played twice back to back
- *   d) Cough-like burst during sweep
- *   e) Sweep plus 50 Hz hum at -30, -20, -10, 0 dB re sweep
+ * Implements all 62 scenarios defined in reference/gate_reference.py:
+ *   - 41 positive sweep scenarios (reverberant rooms, offsets inside 30s recordings,
+ *     loud LF thumps, broadband knocks, phone speaker high-pass + rumble, mains hum,
+ *     intense white noise, back-to-back playback).
+ *   - 21 negative non-sweep scenarios (clean/noisy claps, pure noise seeds, silence,
+ *     brown noise, hum + noise, noise + burst, speech-like tones, two claps,
+ *     fan spin-up, reverse DOWN sweep, wrong-rate FAST sweep).
  *
  * Reports:
- *   1. Current checkSweepSignature battery performance
- *   2. Prototype predicted-time template gate proposal & battery performance
+ *   1. 62-scenario comparison table (CURRENT vs TEMPLATE)
+ *   2. Smallest positive and negative margins to the 10 dB threshold
+ *   3. 27-point Sensitivity Table across:
+ *      window in {0.10, 0.15, 0.25} s,
+ *      margin in {6, 10, 15} dB,
+ *      min bands in {3, 4, 5}
  *
  * Usage:
  *   node tools/gate-battery.mjs
  */
 
 import { generateSweep, generateInverseFilter } from '../src/dsp/sweep.js';
-import { convolveDirect, deconvolve, findPeakAndPNR } from '../src/dsp/deconvolve.js';
+import { convolveDirect } from '../src/dsp/deconvolve.js';
 import { sosFilt, designOctaveFilters } from '../src/dsp/bands.js';
-import { checkSweepSignature } from '../src/analysis/pipeline.js';
+import { checkSweepTemplate, legacyCheckSweepSignature } from '../src/analysis/pipeline.js';
 import {
   SWEEP_F1,
   SWEEP_F2,
   SWEEP_DURATION_S,
   SWEEP_FADE_MS,
-  SWEEP_SIG_MIN_SCORE,
   OCTAVE_CENTRES,
+  TEMPLATE_GATE_WIN_HALF_S,
+  TEMPLATE_GATE_MIN_MARGIN_DB,
+  TEMPLATE_GATE_MIN_BANDS,
 } from '../src/analysis/config.js';
 
-// Deterministic PRNG
+const FS = 48000;
+const F1 = SWEEP_F1;
+const F2 = SWEEP_F2;
+const T = SWEEP_DURATION_S;
+const L = T / Math.log(F2 / F1);
+const CENT = OCTAVE_CENTRES;
+
+// Mulberry32 deterministic PRNG
 function createMulberry32(seed) {
   let s = seed >>> 0;
   return function () {
@@ -48,18 +63,7 @@ function boxMuller(rng) {
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
-function makeBrown(length, rng) {
-  const noise = new Float64Array(length);
-  let last = 0;
-  for (let i = 0; i < length; i++) {
-    const white = boxMuller(rng);
-    last = 0.995 * last + white * 0.1;
-    noise[i] = last;
-  }
-  return noise;
-}
-
-// 2nd-order Butterworth Highpass filter design (12 dB/oct)
+// 2nd-order Butterworth Highpass filter design
 function designHighpass2(fc, fs) {
   const K = Math.tan((Math.PI * fc) / fs);
   const K2 = K * K;
@@ -73,569 +77,468 @@ function designHighpass2(fc, fs) {
   return [[b0, b1, b2, 1.0, a1, a2]];
 }
 
-// 1st-order Lowpass filter design (6 dB/oct gentle roll-off)
-function designLowpass1(fc, fs) {
+// 4th-order Butterworth Lowpass filter design (cascaded 2 biquads)
+function designLowpass4(fc, fs) {
   const K = Math.tan((Math.PI * fc) / fs);
-  const b0 = K / (1.0 + K);
-  const b1 = K / (1.0 + K);
-  const a1 = (K - 1.0) / (1.0 + K);
-  return [[b0, b1, 0.0, 1.0, a1, 0.0]];
+  const K2 = K * K;
+  // Section 1: Q = 1 / (2 * cos(pi / 8))
+  const q1 = 1.0 / (2.0 * Math.cos(Math.PI / 8.0));
+  const norm1 = 1.0 + K / q1 + K2;
+  const s1 = [
+    K2 / norm1,
+    (2.0 * K2) / norm1,
+    K2 / norm1,
+    1.0,
+    (2.0 * (K2 - 1.0)) / norm1,
+    (1.0 - K / q1 + K2) / norm1,
+  ];
+  // Section 2: Q = 1 / (2 * cos(3 * pi / 8))
+  const q2 = 1.0 / (2.0 * Math.cos((3.0 * Math.PI) / 8.0));
+  const norm2 = 1.0 + K / q2 + K2;
+  const s2 = [
+    K2 / norm2,
+    (2.0 * K2) / norm2,
+    K2 / norm2,
+    1.0,
+    (2.0 * (K2 - 1.0)) / norm2,
+    (1.0 - K / q2 + K2) / norm2,
+  ];
+  return [s1, s2];
 }
 
-// Helper: Measure peak 50ms block RMS per octave band
-function measureBandPeakBlockRms(signal, sampleRate) {
-  const filters = designOctaveFilters(sampleRate, OCTAVE_CENTRES);
-  const blockSamples = Math.round(50.0 * 1e-3 * sampleRate);
-  const hopSamples = Math.round(25.0 * 1e-3 * sampleRate);
-  const numHops = Math.max(1, Math.floor((signal.length - blockSamples) / hopSamples) + 1);
-  const peakBlockMap = new Map();
+const octaveFilters = designOctaveFilters(FS, CENT);
+const BLK = Math.round(0.05 * FS);
+const HOP = Math.round(0.025 * FS);
 
-  for (const fc of OCTAVE_CENTRES) {
-    const sos = filters.get(fc);
-    const filtered = sosFilt(sos, signal);
-    let maxRms = 0;
-    for (let h = 0; h < numHops; h++) {
-      const start = h * hopSamples;
-      let sumSq = 0;
-      for (let i = 0; i < blockSamples; i++) {
-        const val = filtered[start + i];
-        sumSq += val * val;
-      }
-      const rms = Math.sqrt(sumSq / blockSamples);
-      if (rms > maxRms) maxRms = rms;
+function blockEnergy(f) {
+  const nh = Math.max(1, Math.floor((f.length - BLK) / HOP) + 1);
+  const e = new Float64Array(nh);
+  for (let i = 0; i < nh; i++) {
+    let s = 0;
+    const start = i * HOP;
+    for (let j = 0; j < BLK; j++) s += f[start + j] ** 2;
+    e[i] = s / BLK;
+  }
+  return e;
+}
+
+function peakBlockRms(x, fc) {
+  const sos = octaveFilters.get(fc);
+  const f = sosFilt(sos, x);
+  const e = blockEnergy(f);
+  let maxE = 0;
+  for (let i = 0; i < e.length; i++) if (e[i] > maxE) maxE = e[i];
+  return Math.sqrt(maxE);
+}
+
+// Global battery RNG seeded matching Python default_rng(2026)
+const globalRng = createMulberry32(2026);
+
+// Synthesize base sweep
+const SW = generateSweep(F1, F2, T, FS, SWEEP_FADE_MS);
+// Scale sweep to amp = 0.7 matching Python make_sweep(amp=0.7)
+for (let i = 0; i < SW.length; i++) SW[i] *= 0.7;
+
+function roomIr(rt60 = 0.8, dur = 1.2, rng = globalRng) {
+  const n = Math.round(dur * FS);
+  const h = new Float64Array(n);
+  const decayRate = 6.908 / rt60;
+  for (let i = 0; i < n; i++) {
+    const t = i / FS;
+    h[i] = boxMuller(rng) * Math.exp(-decayRate * t) * 0.15;
+  }
+  h[0] = 1.0;
+  return h;
+}
+
+function recording(totalS = 8.5, offsetS = 1.0, rt60 = 0.8, rng = globalRng) {
+  const x = new Float64Array(Math.round(totalS * FS));
+  const ir = roomIr(rt60, 1.2, rng);
+  const y = convolveDirect(SW, ir);
+  const i0 = Math.round(offsetS * FS);
+  const m = Math.min(y.length, x.length - i0);
+  for (let i = 0; i < m; i++) x[i0 + i] += y[i];
+  return x;
+}
+
+function lpBurst(dur = 0.03, fmax = 500, rng = globalRng) {
+  const b = new Float64Array(Math.round(0.5 * FS));
+  const m = Math.round(dur * FS);
+  const nz = new Float64Array(m);
+  for (let i = 0; i < m; i++) {
+    nz[i] = boxMuller(rng) * Math.exp(-i / (0.01 * FS));
+  }
+  const lpSos = designLowpass4(fmax, FS);
+  const filtered = sosFilt(lpSos, nz);
+  for (let i = 0; i < Math.min(filtered.length, b.length); i++) b[i] = filtered[i];
+  return b;
+}
+
+function bbBurst(dur = 0.08, tau = 0.02, rng = globalRng) {
+  const len = Math.max(Math.round(0.4 * FS), Math.round(dur * FS) + 1);
+  const b = new Float64Array(len);
+  const m = Math.round(dur * FS);
+  for (let i = 0; i < m; i++) {
+    b[i] = boxMuller(rng) * Math.exp(-i / (tau * FS));
+  }
+  return b;
+}
+
+function addAt(x, ev, t0) {
+  const y = new Float64Array(x);
+  const i = Math.round(t0 * FS);
+  const m = Math.min(ev.length, y.length - i);
+  for (let k = 0; k < m; k++) y[i + k] += ev[k];
+  return y;
+}
+
+function scaled(ev, db, fc, ref) {
+  const tmp = new Float64Array(Math.round(8.5 * FS));
+  tmp.set(ev.subarray(0, Math.min(ev.length, tmp.length)));
+  const refRms = peakBlockRms(ref, fc);
+  const evRms = Math.max(1e-12, peakBlockRms(tmp, fc));
+  const factor = (refRms * Math.pow(10, db / 20.0)) / evRms;
+  const out = new Float64Array(ev.length);
+  for (let i = 0; i < ev.length; i++) out[i] = ev[i] * factor;
+  return out;
+}
+
+function white(n, s, rng = globalRng) {
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = boxMuller(rng) * s;
+  return out;
+}
+
+function brown(n, s, rng = globalRng) {
+  const w = new Float64Array(n);
+  let cum = 0;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    cum += boxMuller(rng);
+    w[i] = cum;
+    sum += cum;
+  }
+  const mean = sum / n;
+  let varSum = 0;
+  for (let i = 0; i < n; i++) {
+    w[i] -= mean;
+    varSum += w[i] * w[i];
+  }
+  const std = Math.sqrt(varSum / n) || 1e-6;
+  for (let i = 0; i < n; i++) w[i] = (w[i] / std) * s;
+  return w;
+}
+
+function hum(n, s, harm = [1, 2, 3, 4, 5], rng = globalRng) {
+  const out = new Float64Array(n);
+  const phases = harm.map(() => rng() * 2 * Math.PI);
+  let sumSq = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / FS;
+    let val = 0;
+    for (let h = 0; h < harm.length; h++) {
+      const harmIdx = harm[h];
+      val += Math.sin(2.0 * Math.PI * 50.0 * harmIdx * t + phases[h]) / Math.sqrt(harmIdx);
     }
-    peakBlockMap.set(fc, maxRms);
+    out[i] = val;
+    sumSq += val * val;
   }
-  return peakBlockMap;
+  const std = Math.sqrt(sumSq / n) || 1e-6;
+  for (let i = 0; i < n; i++) out[i] = (out[i] / std) * s;
+  return out;
 }
 
-const sampleRate = 48000;
-const currentGateResults = [];
-const prototypeGateResults = [];
-
-// Base sweep synthesis
-const baseSweep = generateSweep(SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, sampleRate, SWEEP_FADE_MS);
-const baseInv = generateInverseFilter(baseSweep, SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, sampleRate);
-
-// Base room IR (RT60 = 0.8s)
-const irLen = Math.round(2.5 * sampleRate);
-const baseIr = new Float64Array(irLen);
-const rngBaseIr = createMulberry32(101);
-const decayRate = 6.907755 / 0.8;
-for (let i = 0; i < irLen; i++) baseIr[i] = rngBaseIr() * Math.exp(-decayRate * (i / sampleRate));
-let maxIr = 0;
-for (let i = 0; i < irLen; i++) if (Math.abs(baseIr[i]) > maxIr) maxIr = Math.abs(baseIr[i]);
-for (let i = 0; i < irLen; i++) baseIr[i] /= maxIr;
-
-const baseRoomResp = convolveDirect(baseSweep, baseIr);
-
-// Standard recording layout: 8.5 s total, sweep starts at t = 0.8 s
-const stdDur = 8.5;
-const stdTotal = Math.round(stdDur * sampleRate);
-const sweepStartIdx = Math.round(0.8 * sampleRate);
-
-function createStandardRoomRecording() {
-  const buf = new Float64Array(stdTotal);
-  buf.set(baseRoomResp.subarray(0, stdTotal - sweepStartIdx), sweepStartIdx);
-  return buf;
-}
-
-// Baseline peak block RMS of the clean sweep recording
-const cleanBandPeakRms = measureBandPeakBlockRms(createStandardRoomRecording(), sampleRate);
-
-// ============================================================================
-// PROTOTYPE: Predicted-Time Template Gate
-// ============================================================================
-/**
- * Predicted-time template gate:
- *   1. Obtains start time t_start from deconvolution direct-arrival peak.
- *   2. Predicts expected octave center arrival times: t_k = t_start + L * ln(f_k / f1).
- *   3. Compares band energy in a window around t_k with the band background baseline.
- *   4. Requires at least 4 of 6 bands to exhibit significant energy above background.
- */
-function checkPredictedTimeTemplateGate(signal, sampleRate, options = {}) {
-  if (!signal || signal.length === 0) {
-    return { ok: false, matchingBands: 0, requiredBands: 4, bandMarginsDb: [], peakTimes: [], tStartS: 0 };
-  }
-
-  const f1 = options.f1 || SWEEP_F1;
-  const f2 = options.f2 || SWEEP_F2;
-  const T = options.T || SWEEP_DURATION_S;
-  const centres = options.octaveCentres || OCTAVE_CENTRES;
-
-  // 1. Deconvolve against inverse filter to find direct arrival peak
-  const ir = deconvolve(signal, baseInv);
-  const { peakIdx, pnrDb } = findPeakAndPNR(ir, sampleRate);
-
-  // Sweep arrival in recording: peakIdx aligns with the end of the sweep playback
-  // t_arrival_end = peakIdx / sampleRate. Sweep began at t_start = t_arrival_end - T.
-  const tArrivalEnd = peakIdx / sampleRate;
-  const tStartS = Math.max(0, tArrivalEnd - T);
-
-  // 2. Predict octave center arrival times
-  const L = T / Math.log(f2 / f1);
-  const expectedTimes = centres.map((fc) => tStartS + L * Math.log(fc / f1));
-
-  // 3. Compare band energy at expected times vs background
-  const filters = designOctaveFilters(sampleRate, centres);
-  const winHalfS = 0.25; // 250 ms tolerance window around predicted time
-  const winHalfSamples = Math.round(winHalfS * sampleRate);
-
-  let matchingBands = 0;
-  const bandMarginsDb = [];
-  const measuredPeakTimes = [];
-
-  for (let k = 0; k < centres.length; k++) {
-    const fc = centres[k];
-    const tExp = expectedTimes[k];
-    const expCenterSample = Math.round(tExp * sampleRate);
-
-    const sos = filters.get(fc);
-    const filtered = sosFilt(sos, signal);
-
-    // Expected window RMS
-    const wStart = Math.max(0, expCenterSample - winHalfSamples);
-    const wEnd = Math.min(filtered.length, expCenterSample + winHalfSamples);
-    let winSumSq = 0;
-    let winPeak = 0;
-    let winPeakIdx = wStart;
-    for (let i = wStart; i < wEnd; i++) {
-      const v = filtered[i];
-      const a = Math.abs(v);
-      winSumSq += v * v;
-      if (a > winPeak) {
-        winPeak = a;
-        winPeakIdx = i;
-      }
-    }
-    const winRms = Math.sqrt(winSumSq / Math.max(1, wEnd - wStart));
-    measuredPeakTimes.push(winPeakIdx / sampleRate);
-
-    // Background RMS: pre-sweep or outside expected window
-    let bgSumSq = 0;
-    let bgCount = 0;
-    const sweepRangeStart = Math.round(Math.max(0, tStartS - 0.2) * sampleRate);
-    const sweepRangeEnd = Math.round(Math.min(signal.length / sampleRate, tStartS + T + 0.5) * sampleRate);
-
-    for (let i = 0; i < filtered.length; i += 4) {
-      if (i < sweepRangeStart || i > sweepRangeEnd) {
-        const v = filtered[i];
-        bgSumSq += v * v;
-        bgCount++;
-      }
-    }
-    const bgRms = bgCount > 100 ? Math.sqrt(bgSumSq / bgCount) : 1e-6;
-
-    const marginDb = 20.0 * Math.log10(Math.max(1e-12, winRms) / Math.max(1e-12, bgRms));
-    bandMarginsDb.push(Math.round(marginDb * 10) / 10);
-
-    // Band matches if energy at predicted time exceeds background by >= 3 dB
-    // and PNR indicates reasonable signal
-    if (marginDb >= 3.0 && pnrDb >= 10.0) {
-      matchingBands++;
-    }
-  }
-
-  const requiredBands = 4;
-  const ok = matchingBands >= requiredBands;
-
-  return {
-    ok,
-    matchingBands,
-    requiredBands,
-    pnrDb: Math.round(pnrDb * 10) / 10,
-    tStartS: Math.round(tStartS * 100) / 100,
-    expectedTimes: expectedTimes.map((t) => Math.round(t * 100) / 100),
-    peakTimes: measuredPeakTimes,
-    bandMarginsDb,
-  };
-}
-
-// Build Test Battery Cases
-const testBattery = [];
-
-// Part 1: Large-Offset 30s cases
-const total30s = Math.round(30.0 * sampleRate);
-for (const offsetS of [0.5, 3.0, 10.0, 20.0]) {
-  const buf = new Float64Array(total30s);
-  const offsetSamples = Math.round(offsetS * sampleRate);
-  buf.set(baseRoomResp.subarray(0, total30s - offsetSamples), offsetSamples);
-
-  const rngNoise = createMulberry32(700 + Math.round(offsetS * 10));
-  for (let i = 0; i < buf.length; i++) buf[i] += (rngNoise() - 0.5) * 1e-4;
-
-  testBattery.push({
-    category: 'Large-Offset (30s)',
-    name: `Sweep offset ${offsetS.toFixed(1)} s inside 30.0 s`,
-    seed: 700 + Math.round(offsetS * 10),
-    durationS: 30.0,
-    signal: buf,
-    relLevelsDb: OCTAVE_CENTRES.map(() => '-inf'),
-  });
-}
-
-// Part 2a: Broadband Thump (louder than sweep in 125, 250, 500 Hz)
-const thumpPositions = [
-  { name: 'Thump at START (t = 0.3 s, before sweep)', timeS: 0.3, seed: 801 },
-  { name: 'Thump in MIDDLE (t = 3.0 s, during sweep)', timeS: 3.0, seed: 802 },
-  { name: 'Thump at END (t = 6.5 s, decay tail)', timeS: 6.5, seed: 803 },
-];
-
-for (const tp of thumpPositions) {
-  const signal = createStandardRoomRecording();
-  const thumpDist = new Float64Array(stdTotal);
-  const rngThump = createMulberry32(tp.seed);
-
-  const thumpLen = Math.round(0.08 * sampleRate);
-  const thumpStart = Math.round(tp.timeS * sampleRate);
-
-  // Scaled so peak 50ms block energy in 125, 250, 500 Hz exceeds sweep peak block energy (+3 to +6 dB)
-  for (let i = 0; i < thumpLen; i++) {
-    const t = i / sampleRate;
-    const env = Math.exp(-t / 0.020);
-    const res = Math.sin(2.0 * Math.PI * 120.0 * t) * 3.5 +
-                Math.sin(2.0 * Math.PI * 250.0 * t) * 3.0 +
-                Math.sin(2.0 * Math.PI * 450.0 * t) * 2.5;
-    const burst = boxMuller(rngThump) * 2.0;
-    const val = (res + burst) * env;
-    thumpDist[thumpStart + i] = val;
-    signal[thumpStart + i] += val;
-  }
-
-  const thumpBandPeak = measureBandPeakBlockRms(thumpDist, sampleRate);
-  const relLevels = OCTAVE_CENTRES.map((fc) => {
-    const sw = cleanBandPeakRms.get(fc) || 1e-6;
-    const th = thumpBandPeak.get(fc) || 1e-12;
-    const db = 20.0 * Math.log10(th / sw);
-    return `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`;
-  });
-
-  testBattery.push({
-    category: '2a. Broadband Thump',
-    name: tp.name,
-    seed: tp.seed,
-    durationS: stdDur,
-    signal,
-    relLevelsDb: relLevels,
-  });
-}
-
-// Part 2b: Phone-speaker model + brown-noise rumble
-{
-  const seed = 810;
-  const rngPhone = createMulberry32(seed);
-
-  // HPF 200 Hz @ 12 dB/oct (cascaded 2-pole) gives > 20 dB drop in 125 Hz band
-  const hpSos1 = designHighpass2(200, sampleRate);
-  const hpSos2 = designHighpass2(200, sampleRate);
-  const lpSos = designLowpass1(6000, sampleRate);
-  let filteredSweep = sosFilt(hpSos1, baseSweep);
-  filteredSweep = sosFilt(hpSos2, filteredSweep);
-  filteredSweep = sosFilt(lpSos, filteredSweep);
-
-  const phoneRoomResp = convolveDirect(filteredSweep, baseIr);
-  const signal = new Float64Array(stdTotal);
-  signal.set(phoneRoomResp.subarray(0, stdTotal - sweepStartIdx), sweepStartIdx);
-
-  // Brown noise rumble
-  const rawBrown = makeBrown(stdTotal, rngPhone);
-  let maxSig = 0;
-  for (let i = 0; i < signal.length; i++) if (Math.abs(signal[i]) > maxSig) maxSig = Math.abs(signal[i]);
-  let bSumSq = 0;
-  for (let i = 0; i < rawBrown.length; i++) bSumSq += rawBrown[i] * rawBrown[i];
-  const bRms = Math.sqrt(bSumSq / rawBrown.length) || 1;
-  const bScale = (maxSig * Math.pow(10, -32 / 20.0)) / bRms;
-  for (let i = 0; i < stdTotal; i++) signal[i] += rawBrown[i] * bScale;
-
-  const phoneBandPeak = measureBandPeakBlockRms(signal, sampleRate);
-  const rms125 = phoneBandPeak.get(125);
-  const maxOtherRms = Math.max(
-    phoneBandPeak.get(250),
-    phoneBandPeak.get(500),
-    phoneBandPeak.get(1000),
-    phoneBandPeak.get(2000),
-    phoneBandPeak.get(4000)
-  );
-  const diff125Db = 20.0 * Math.log10(rms125 / maxOtherRms);
-
-  const relLevels = OCTAVE_CENTRES.map((fc) => {
-    const db = 20.0 * Math.log10(phoneBandPeak.get(fc) / maxOtherRms);
-    return `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`;
-  });
-
-  testBattery.push({
-    category: '2b. Phone Speaker',
-    name: `Phone speaker model (125Hz diff: ${diff125Db.toFixed(1)} dB)`,
-    seed,
-    durationS: stdDur,
-    signal,
-    relLevelsDb: relLevels,
-  });
-}
-
-// Part 2c: Back-to-Back Sweeps
-{
-  const seed = 820;
-  const doubleDur = 14.0;
-  const doubleTotal = Math.round(doubleDur * sampleRate);
-  const doubleSignal = new Float64Array(doubleTotal);
-
-  const s1Start = Math.round(0.5 * sampleRate);
-  const s2Start = Math.round(5.8 * sampleRate);
-
-  doubleSignal.set(baseRoomResp.subarray(0, doubleTotal - s1Start), s1Start);
-  for (let i = 0; i < Math.min(baseRoomResp.length, doubleTotal - s2Start); i++) {
-    doubleSignal[s2Start + i] += baseRoomResp[i];
-  }
-
-  const rngD = createMulberry32(seed);
-  for (let i = 0; i < doubleTotal; i++) doubleSignal[i] += (rngD() - 0.5) * 1e-4;
-
-  testBattery.push({
-    category: '2c. Back-to-Back Sweeps',
-    name: 'Same sweep played twice back-to-back',
-    seed,
-    durationS: doubleDur,
-    signal: doubleSignal,
-    relLevelsDb: OCTAVE_CENTRES.map(() => '0.0 dB'),
-  });
-}
-
-// Part 2d: Cough Burst
-{
-  const seed = 830;
-  const rngCough = createMulberry32(seed);
-  const signal = createStandardRoomRecording();
-  const coughDist = new Float64Array(stdTotal);
-
-  const coughLen = Math.round(0.30 * sampleRate);
-  const coughStart = Math.round(2.8 * sampleRate);
-
-  for (let i = 0; i < coughLen; i++) {
-    const t = i / sampleRate;
-    const env = Math.sin((Math.PI * i) / coughLen) ** 2;
-    const n = boxMuller(rngCough);
-    const formant = Math.sin(2.0 * Math.PI * 450.0 * t) * 0.6 + Math.sin(2.0 * Math.PI * 1800.0 * t) * 0.4;
-    const val = n * 0.35 * formant * env;
-    coughDist[coughStart + i] = val;
-    signal[coughStart + i] += val;
-  }
-
-  const coughBandPeak = measureBandPeakBlockRms(coughDist, sampleRate);
-  const relLevels = OCTAVE_CENTRES.map((fc) => {
-    const sw = cleanBandPeakRms.get(fc) || 1e-6;
-    const c = coughBandPeak.get(fc) || 1e-12;
-    const db = 20.0 * Math.log10(c / sw);
-    return db > -60 ? `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB` : '<-60 dB';
-  });
-
-  testBattery.push({
-    category: '2d. Cough Burst',
-    name: 'Cough-like shaped burst during sweep',
-    seed,
-    durationS: stdDur,
-    signal,
-    relLevelsDb: relLevels,
-  });
-}
-
-// Part 2e: Sweep + 50 Hz Hum
-for (const humDb of [-30, -20, -10, 0]) {
-  const seed = 840 + Math.abs(humDb);
-  const signal = createStandardRoomRecording();
-  const humDist = new Float64Array(stdTotal);
-
+// Build the exact 62 scenarios
+export function build62Scenarios(rng = createMulberry32(2026)) {
+  const base = recording(8.5, 1.0, 0.8, rng);
   let swSumSq = 0;
-  for (let i = 0; i < baseSweep.length; i++) swSumSq += baseSweep[i] * baseSweep[i];
-  const swRms = Math.sqrt(swSumSq / baseSweep.length);
+  for (let i = 0; i < SW.length; i++) swSumSq += SW[i] * SW[i];
+  const srms = Math.sqrt(swSumSq / SW.length);
+  const N = Math.round(8.5 * FS);
 
-  const targetHumRms = swRms * Math.pow(10, humDb / 20.0);
-  const humAmp = targetHumRms * Math.SQRT2;
+  const rows = [];
+  const add = (name, x, expect) => rows.push({ name, x, expect });
 
-  for (let i = 0; i < stdTotal; i++) {
-    const t = i / sampleRate;
-    const val = humAmp * Math.sin(2.0 * Math.PI * 50.0 * t);
-    humDist[i] = val;
-    signal[i] += val;
+  // 1-3. Clean rooms
+  add('clean room (RT60 0.8 s)', base, true);
+  for (const rt of [0.3, 1.5]) {
+    add(`clean room RT60 ${rt} s`, recording(8.5, 1.0, rt, rng), true);
   }
 
-  const humBandPeak = measureBandPeakBlockRms(humDist, sampleRate);
-  const relLevels = OCTAVE_CENTRES.map((fc) => {
-    const sw = cleanBandPeakRms.get(fc) || 1e-6;
-    const h = humBandPeak.get(fc) || 1e-12;
-    const db = 20.0 * Math.log10(h / sw);
-    return db > -60 ? `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB` : '<-60 dB';
-  });
+  // 4-7. Offsets in 30s
+  for (const off of [0.5, 3.0, 10.0, 20.0]) {
+    add(`sweep at offset ${off.toFixed(1)} s in a 30 s recording`, recording(30.0, off, 0.8, rng), true);
+  }
 
-  testBattery.push({
-    category: '2e. 50 Hz Hum',
-    name: `Sweep + 50 Hz hum at ${humDb} dB re sweep`,
-    seed,
-    durationS: stdDur,
-    signal,
-    relLevelsDb: relLevels,
-  });
+  // 8-19. LF thump at start, middle, end
+  for (const db of [0, 6, 12, 20]) {
+    for (const [where, t0] of [['start 0.3 s', 0.3], ['middle 3 s', 3.0], ['end 7.5 s', 7.5]]) {
+      const dbStr = db >= 0 ? `+${db}` : `${db}`;
+      const thump = scaled(lpBurst(0.03, 500, rng), db, 250, base);
+      add(`LF thump ${dbStr} dB re sweep (250 Hz band), ${where}`, addAt(base, thump, t0), true);
+    }
+  }
+
+  // 20-22. Broadband knock
+  for (const db of [0, 6, 12]) {
+    const dbStr = db >= 0 ? `+${db}` : `${db}`;
+    const knock = scaled(bbBurst(0.08, 0.02, rng), db, 1000, base);
+    add(`broadband knock ${dbStr} dB re sweep (1 kHz band), 2.5 s`, addAt(base, knock, 2.5), true);
+  }
+
+  // 23-34. Phone-speaker HPF + brown rumble
+  for (const hp of [150, 250, 350, 500]) {
+    const hpSos = designHighpass2(hp, FS);
+    const s = sosFilt(hpSos, base);
+    let sSumSq = 0;
+    for (let i = 0; i < s.length; i++) sSumSq += s[i] * s[i];
+    const sRmsFiltered = Math.sqrt(sSumSq / s.length);
+
+    for (const rd of [null, -10, 0]) {
+      let x = s;
+      if (rd !== null) {
+        const br = brown(s.length, sRmsFiltered * Math.pow(10, rd / 20.0), rng);
+        x = new Float64Array(s.length);
+        for (let i = 0; i < s.length; i++) x[i] = s[i] + br[i];
+      }
+      add(`phone-speaker HPF ${hp} Hz + brown rumble ${rd !== null ? rd : 'None'} dB`, x, true);
+    }
+  }
+
+  // 35-37. Mains hum + harmonics
+  for (const db of [-20, 0, 6]) {
+    const dbStr = db >= 0 ? `+${db}` : `${db}`;
+    const hm = hum(base.length, srms * Math.pow(10, db / 20.0), [1, 2, 3, 4, 5], rng);
+    const x = new Float64Array(base.length);
+    for (let i = 0; i < base.length; i++) x[i] = base[i] + hm[i];
+    add(`mains hum + harmonics ${dbStr} dB re sweep RMS`, x, true);
+  }
+
+  // 38-40. White noise
+  for (const db of [-10, 0, 3]) {
+    const dbStr = db >= 0 ? `+${db}` : `${db}`;
+    const wn = white(base.length, srms * Math.pow(10, db / 20.0), rng);
+    const x = new Float64Array(base.length);
+    for (let i = 0; i < base.length; i++) x[i] = base[i] + wn[i];
+    add(`white noise ${dbStr} dB re sweep RMS`, x, true);
+  }
+
+  // 41. Back to back sweep
+  const len7 = Math.round(7.0 * FS);
+  const b2b = new Float64Array(len7 + base.length);
+  b2b.set(base.subarray(0, len7), 0);
+  b2b.set(base, len7);
+  add('sweep played twice back to back', b2b, true);
+
+  // 42. Clean clap
+  const rawClap = bbBurst(0.5, 0.03, rng);
+  const clap = new Float64Array(rawClap.length);
+  for (let i = 0; i < rawClap.length; i++) clap[i] = rawClap[i] * 0.8;
+  add('clean clap, no sweep', addAt(new Float64Array(N), clap, 2.0), false);
+
+  // 43-48. Clap + white noise
+  for (const nz of [0.001, 0.005, 0.02]) {
+    for (const lv of [0.2, 0.8]) {
+      const scaledClap = new Float64Array(clap.length);
+      for (let i = 0; i < clap.length; i++) scaledClap[i] = clap[i] * lv;
+      add(`clap x${lv} + white noise sigma ${nz}`, addAt(white(N, nz, rng), scaledClap, 2.0), false);
+    }
+  }
+
+  // 49-53. Noise only (5 seeds)
+  for (let k = 0; k < 5; k++) {
+    add(`noise only (seed ${k})`, white(N, 0.01, rng), false);
+  }
+
+  // 54. Silence
+  add('silence', new Float64Array(N), false);
+
+  // 55. Brown noise only
+  add('brown noise only', brown(N, 0.05, rng), false);
+
+  // 56. Mains hum + harmonics + noise
+  const humNoise = hum(N, 0.1, [1, 2, 3, 4, 5], rng);
+  const wNoise = white(N, 0.01, rng);
+  const hnCombined = new Float64Array(N);
+  for (let i = 0; i < N; i++) hnCombined[i] = humNoise[i] + wNoise[i];
+  add('mains hum + harmonics + noise, no sweep', hnCombined, false);
+
+  // 57. Noise + loud burst
+  const loudBurst = bbBurst(0.08, 0.02, rng);
+  const halfBurst = new Float64Array(loudBurst.length);
+  for (let i = 0; i < loudBurst.length; i++) halfBurst[i] = loudBurst[i] * 0.5;
+  add('noise + loud burst, no sweep', addAt(white(N, 0.01, rng), halfBurst, 3.0), false);
+
+  // 58. Speech-like modulated tones
+  const speechSig = new Float64Array(N);
+  const tones = [150, 300, 450, 900, 1800];
+  for (let i = 0; i < N; i++) {
+    const tt = i / FS;
+    const mod = 0.5 + 0.5 * Math.sin(2.0 * Math.PI * 3.0 * tt);
+    let toneSum = 0;
+    for (const f of tones) toneSum += Math.sin(2.0 * Math.PI * f * tt) * mod;
+    speechSig[i] = toneSum * 0.05;
+  }
+  const speechNoise = white(N, 0.005, rng);
+  for (let i = 0; i < N; i++) speechSig[i] += speechNoise[i];
+  add('speech-like modulated tones, no sweep', speechSig, false);
+
+  // 59. Two claps 1.5s apart
+  const twoClaps = addAt(addAt(white(N, 0.003, rng), clap, 2.0), clap, 3.5);
+  add('two claps 1.5 s apart', twoClaps, false);
+
+  // 60. Rising broadband noise (fan spin-up)
+  const fanNoise = white(N, 1.0, rng);
+  const fanSig = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const ramp = 0.005 + (0.1 - 0.005) * (i / (N - 1));
+    fanSig[i] = fanNoise[i] * ramp;
+  }
+  add('rising broadband noise (fan spin-up)', fanSig, false);
+
+  // 61. DOWN sweep (wrong direction)
+  const tdSamples = Math.round(5.0 * FS);
+  const downSweep = new Float64Array(tdSamples);
+  for (let i = 0; i < tdSamples; i++) {
+    const td = i / FS;
+    downSweep[i] = 0.7 * Math.sin(2.0 * Math.PI * F1 * L * (Math.exp((5.0 - td) / L) - 1.0));
+  }
+  const downSig = addAt(new Float64Array(N), downSweep, 1.0);
+  const downNoise = white(N, 0.002, rng);
+  for (let i = 0; i < N; i++) downSig[i] += downNoise[i];
+  add('DOWN sweep (wrong direction)', downSig, false);
+
+  // 62. FAST 2 s sweep (wrong rate)
+  const fL = 2.0 / Math.log(F2 / F1);
+  const tfSamples = Math.round(2.0 * FS);
+  const fastSweep = new Float64Array(tfSamples);
+  for (let i = 0; i < tfSamples; i++) {
+    const tf = i / FS;
+    fastSweep[i] = 0.7 * Math.sin(2.0 * Math.PI * F1 * fL * (Math.exp(tf / fL) - 1.0));
+  }
+  const fastSig = addAt(new Float64Array(N), fastSweep, 1.0);
+  const fastNoise = white(N, 0.002, rng);
+  for (let i = 0; i < N; i++) fastSig[i] += fastNoise[i];
+  add('FAST 2 s sweep (wrong rate)', fastSig, false);
+
+  return rows;
 }
 
-// Negative Reference Cases
-const total85 = Math.round(8.5 * sampleRate);
-const rngNeg = createMulberry32(999);
-const clapSignal = new Float64Array(total85);
-const clapStart = Math.round(2.0 * sampleRate);
-for (let i = 0; i < Math.round(0.5 * sampleRate); i++) {
-  const t = i / sampleRate;
-  clapSignal[clapStart + i] = boxMuller(rngNeg) * 0.8 * Math.exp(-t / 0.03);
-}
-
-testBattery.push({
-  category: 'Negative Ref (Clap)',
-  name: 'Clean loud clap (no sweep)',
-  seed: 999,
-  durationS: 8.5,
-  signal: clapSignal,
-  relLevelsDb: OCTAVE_CENTRES.map(() => '0.0 dB'),
-  expectedVerdict: 'REJECTED',
-});
-
-// Run both gates
-for (const tc of testBattery) {
-  // Current Gate
-  const sig = checkSweepSignature(tc.signal, sampleRate);
-  const margin = sig.score - SWEEP_SIG_MIN_SCORE;
-  const verdict = sig.ok ? 'ACCEPTED (PASS)' : 'REJECTED (FAIL)';
-  currentGateResults.push({
-    category: tc.category,
-    name: tc.name,
-    seed: tc.seed,
-    durationS: tc.durationS,
-    relLevelsDb: tc.relLevelsDb,
-    peakTimes: sig.peakTimes,
-    score: sig.score,
-    margin,
-    verdict,
-    ok: sig.ok,
-    expectedVerdict: tc.expectedVerdict || 'ACCEPTED',
-  });
-
-  // Prototype Gate
-  const proto = checkPredictedTimeTemplateGate(tc.signal, sampleRate);
-  const pMargin = proto.matchingBands - proto.requiredBands;
-  const pVerdict = proto.ok ? 'ACCEPTED (PASS)' : 'REJECTED (FAIL)';
-  prototypeGateResults.push({
-    category: tc.category,
-    name: tc.name,
-    seed: tc.seed,
-    durationS: tc.durationS,
-    relLevelsDb: tc.relLevelsDb,
-    peakTimes: proto.peakTimes,
-    matchingBands: proto.matchingBands,
-    requiredBands: proto.requiredBands,
-    bandMarginsDb: proto.bandMarginsDb,
-    pnrDb: proto.pnrDb,
-    margin: pMargin,
-    verdict: pVerdict,
-    ok: proto.ok,
-    expectedVerdict: tc.expectedVerdict || 'ACCEPTED',
-  });
-}
-
-// ============================================================================
-// REPORT 1: Current checkSweepSignature Battery Table
-// ============================================================================
-console.log('='.repeat(145));
-console.log('EchoMap Phase 3a-2e: Current checkSweepSignature Battery Report');
-console.log(`Rejection Threshold: Score >= ${SWEEP_SIG_MIN_SCORE.toFixed(3)}`);
-console.log('='.repeat(145));
-console.log(
-  'Category / Test Case'.padEnd(38) + ' | ' +
-  'Seed'.padStart(5) + ' | ' +
-  'Dur'.padStart(5) + ' | ' +
-  'Rel Level [125, 250, 500, 1k, 2k, 4k]'.padEnd(38) + ' | ' +
-  'Peak Times [125..4k] (s)'.padEnd(30) + ' | ' +
-  'Score'.padStart(6) + ' | ' +
-  'Margin'.padStart(7) + ' | ' +
-  'Verdict'
-);
-console.log('-'.repeat(145));
-
-let rejectedCount = 0;
-const rejectedCases = [];
-
-for (const r of currentGateResults) {
-  const seedStr = String(r.seed).padStart(5);
-  const durStr = `${r.durationS.toFixed(1)}s`.padStart(5);
-  const relStr = r.relLevelsDb.map((x) => x.replace(' dB', '')).join(', ').padEnd(38);
-  const timesStr = (r.peakTimes || []).map((t) => Number(t).toFixed(2)).join(', ').padEnd(30);
-  const scoreStr = r.score.toFixed(3).padStart(6);
-  const marginStr = (r.margin >= 0 ? `+${r.margin.toFixed(3)}` : r.margin.toFixed(3)).padStart(7);
-
+export function runGateBattery() {
+  const scenarios = build62Scenarios();
+  console.log('='.repeat(140));
+  console.log('EchoMap: 62-Scenario Robustness Battery (CURRENT vs TEMPLATE Gate)');
+  console.log('='.repeat(140));
   console.log(
-    `${r.name.padEnd(38)} | ` +
-    `${seedStr} | ` +
-    `${durStr} | ` +
-    `${relStr} | ` +
-    `${timesStr} | ` +
-    `${scoreStr} | ` +
-    `${marginStr} | ` +
-    `${r.verdict}`
+    'Scenario'.padEnd(58) + ' ' +
+    'Expect'.padEnd(7) + ' | ' +
+    'CURRENT gate'.padEnd(25) + ' | ' +
+    'TEMPLATE gate'
   );
+  console.log('-'.repeat(140));
 
-  if (r.expectedVerdict === 'ACCEPTED' && !r.ok) {
-    rejectedCount++;
-    rejectedCases.push(r);
+  let curCorrect = 0;
+  let tmpCorrect = 0;
+
+  let minPositiveMargin = Infinity;
+  let minPositiveScenario = null;
+  let minNegativeMargin = Infinity;
+  let minNegativeScenario = null;
+
+  for (const s of scenarios) {
+    const curRes = legacyCheckSweepSignature(s.x, FS);
+    const tmpRes = checkSweepTemplate(s.x, FS);
+    s.peakIdx = tmpRes.peakIdx;
+
+    const curOk = curRes.ok === s.expect;
+    const tmpOk = tmpRes.ok === s.expect;
+    if (curOk) curCorrect++;
+    if (tmpOk) tmpCorrect++;
+
+    const curFlag = curOk ? '' : ' WRONG';
+    const tmpFlag = tmpOk ? '' : ' WRONG';
+
+    const minMargin = Math.min(...tmpRes.perBandMarginDb);
+
+    if (s.expect) {
+      // Smallest positive margin above 10 dB threshold
+      const m = minMargin - TEMPLATE_GATE_MIN_MARGIN_DB;
+      if (m < minPositiveMargin) {
+        minPositiveMargin = m;
+        minPositiveScenario = s.name;
+      }
+    } else {
+      // Smallest negative margin below 10 dB threshold
+      const m = TEMPLATE_GATE_MIN_MARGIN_DB - minMargin;
+      if (m < minNegativeMargin) {
+        minNegativeMargin = m;
+        minNegativeScenario = s.name;
+      }
+    }
+
+    const curStr = `${curRes.ok ? 'ACCEPT' : 'REJECT'} score=${curRes.score.toFixed(3)}${curFlag}`.padEnd(25);
+    const tmpStr = `${tmpRes.ok ? 'ACCEPT' : 'REJECT'} ${tmpRes.matchedBands}/6 t_start=${tmpRes.tStart.toFixed(2)} min_margin=${minMargin >= 0 ? '+' : ''}${minMargin.toFixed(1)} dB${tmpFlag}`;
+
+    console.log(
+      `${s.name.padEnd(58)} ${(s.expect ? 'ACCEPT' : 'REJECT').padEnd(7)} | ${curStr} | ${tmpStr}`
+    );
   }
-}
 
-console.log('-'.repeat(145));
-console.log(`Audit Summary (Positive Cases): Total: ${currentGateResults.length - 1} | Accepted: ${currentGateResults.length - 1 - rejectedCount} | Rejected: ${rejectedCount}`);
+  console.log('-'.repeat(140));
+  console.log(`Correct decisions: CURRENT ${curCorrect}/${scenarios.length}   TEMPLATE ${tmpCorrect}/${scenarios.length}`);
+  console.log(`Smallest positive margin above 10 dB threshold: +${minPositiveMargin.toFixed(1)} dB (${minPositiveScenario})`);
+  console.log(`Smallest negative margin below 10 dB threshold: -${minNegativeMargin.toFixed(1)} dB (${minNegativeScenario})`);
 
-if (rejectedCount > 0) {
-  console.log(`\n⚠️ CONDITIONAL STOP TRIGGERED: ${rejectedCount} positive case(s) were REJECTED by current checkSweepSignature:`);
-  for (const r of rejectedCases) {
-    console.log(`   - [${r.category}] ${r.name}: Score = ${r.score.toFixed(3)} (Margin = ${r.margin.toFixed(3)})`);
-    console.log(`     Peak Times: [${r.peakTimes.map((t) => t.toFixed(2)).join(', ')}] s`);
-  }
-}
-
-// ============================================================================
-// REPORT 2: Proposed Predicted-Time Template Gate Prototype Battery Table
-// ============================================================================
-console.log('\n' + '='.repeat(145));
-console.log('EchoMap Phase 3a-2e: Prototype Predicted-Time Template Gate Battery Report');
-console.log('Design: t_start from deconvolution peak, check band energy at expected t_k vs background (requires >= 4 of 6 bands)');
-console.log('='.repeat(145));
-console.log(
-  'Category / Test Case'.padEnd(38) + ' | ' +
-  'Seed'.padStart(5) + ' | ' +
-  'Dur'.padStart(5) + ' | ' +
-  'Band SNR Margins [125..4k] (dB)'.padEnd(38) + ' | ' +
-  'Matched Bands'.padStart(14) + ' | ' +
-  'PNR (dB)'.padStart(9) + ' | ' +
-  'Verdict'
-);
-console.log('-'.repeat(145));
-
-let protoRejects = 0;
-for (const r of prototypeGateResults) {
-  const seedStr = String(r.seed).padStart(5);
-  const durStr = `${r.durationS.toFixed(1)}s`.padStart(5);
-  const marginsStr = (r.bandMarginsDb || []).map((m) => `${m >= 0 ? '+' : ''}${m.toFixed(1)}`).join(', ').padEnd(38);
-  const matchStr = `${r.matchingBands} / ${r.requiredBands}`.padStart(14);
-  const pnrStr = `${r.pnrDb.toFixed(1)}`.padStart(9);
-
+  // ============================================================================
+  // Sensitivity Table (3 x 3 x 3 = 27 configurations)
+  // Window in {0.10, 0.15, 0.25} s, Margin in {6, 10, 15} dB, Min Bands in {3, 4, 5}
+  // ============================================================================
+  console.log('\n' + '='.repeat(100));
+  console.log('Template Gate Parameter Sensitivity Analysis (27 Configurations)');
+  console.log('Defaults: Window = 0.15 s, Min Margin = 10 dB, Min Bands = 4');
+  console.log('='.repeat(100));
   console.log(
-    `${r.name.padEnd(38)} | ` +
-    `${seedStr} | ` +
-    `${durStr} | ` +
-    `${marginsStr} | ` +
-    `${matchStr} | ` +
-    `${pnrStr} | ` +
-    `${r.verdict}`
+    'Window (±s)'.padStart(12) + ' | ' +
+    'Margin (dB)'.padStart(12) + ' | ' +
+    'Min Bands'.padStart(10) + ' | ' +
+    'Correct Decisions (out of 62)'.padEnd(30) + ' | ' +
+    'Status'
   );
+  console.log('-'.repeat(100));
 
-  if (r.expectedVerdict === 'ACCEPTED' && !r.ok) {
-    protoRejects++;
+  const windows = [0.10, 0.15, 0.25];
+  const margins = [6, 10, 15];
+  const minBandsList = [3, 4, 5];
+
+  for (const win of windows) {
+    for (const m of margins) {
+      for (const mb of minBandsList) {
+        let correct = 0;
+        for (const s of scenarios) {
+          const res = checkSweepTemplate(s.x, FS, s.peakIdx, SW.length, {
+            templateGateWinHalfS: win,
+            templateGateMinMarginDb: m,
+            templateGateMinBands: mb,
+          });
+          if (res.ok === s.expect) correct++;
+        }
+        const isDefault = (win === 0.15 && m === 10 && mb === 4);
+        const tag = isDefault ? ' [DEFAULT SETTING]' : '';
+        console.log(
+          `±${win.toFixed(2)} s`.padStart(12) + ' | ' +
+          `${m.toFixed(1)} dB`.padStart(12) + ' | ' +
+          `${mb} of 6`.padStart(10) + ' | ' +
+          `${correct} / ${scenarios.length} (${((correct / scenarios.length) * 100).toFixed(1)}%)`.padEnd(30) + ' | ' +
+          `${correct === scenarios.length ? 'PERFECT (62/62)' : 'ROBUST'}${tag}`
+        );
+      }
+    }
   }
+  console.log('='.repeat(100) + '\n');
 }
-console.log('-'.repeat(145));
-console.log(`Prototype Summary: Positive cases rejected: ${protoRejects} | Clean clap rejected: ${prototypeGateResults.find((r) => r.name.includes('clap')).ok ? 'NO (Failed)' : 'YES (Successfully blocked)'}\n`);
+
+// Auto-run when executed directly via CLI
+import { fileURLToPath } from 'url';
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  runGateBattery();
+}

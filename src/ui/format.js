@@ -137,6 +137,26 @@ export function escapeHtml(str) {
 }
 
 /**
+ * Format per-band margins (125 Hz to 4000 Hz) for UI display.
+ *
+ * @param {Array<number>|null|undefined} margins
+ * @returns {string}
+ */
+export function formatPerBandMargins(margins) {
+  if (!margins || !Array.isArray(margins) || margins.length === 0) {
+    return '—';
+  }
+  const labels = ['125Hz', '250Hz', '500Hz', '1kHz', '2kHz', '4kHz'];
+  return margins
+    .map((m, idx) => {
+      const lbl = labels[idx] || `b${idx + 1}`;
+      if (m <= -90) return `${lbl}: unmatched`;
+      return `${lbl}: ${Number(m) >= 0 ? '+' : ''}${Number(m).toFixed(1)} dB`;
+    })
+    .join(', ');
+}
+
+/**
  * Format per-band peak times (125 Hz to 4000 Hz) for UI display.
  *
  * @param {Array<number>|null|undefined} peakTimes
@@ -157,7 +177,7 @@ export function formatPeakTimes(peakTimes) {
 
 /**
  * Format acoustic analysis diagnostics for display in a collapsed Details section.
- * Lists PNR, deltaPostPre, ordering score and threshold, per-band peak times, sample rate, duration, and which gate fired.
+ * Lists PNR, deltaPostPre, sweep start (t_start), matched bands, per-band margins, sample rate, duration, and which gate fired.
  *
  * @param {object|null|undefined} diagnostics
  * @returns {string} HTML string
@@ -175,11 +195,15 @@ export function formatDiagnosticsHtml(diagnostics) {
     ? `${diagnostics.deltaPostPreDb.toFixed(1)} dB (threshold: ≥ ${(diagnostics.deltaPostPreThresholdDb ?? 1.5).toFixed(1)} dB)`
     : '—';
 
-  const scoreVal = diagnostics.orderingScore != null && Number.isFinite(diagnostics.orderingScore)
-    ? `${diagnostics.orderingScore.toFixed(3)} (threshold: ≥ ${(diagnostics.orderingThreshold ?? 0.65).toFixed(3)})`
+  const tStartVal = diagnostics.tStart != null && Number.isFinite(diagnostics.tStart)
+    ? `${diagnostics.tStart.toFixed(2)} s`
     : '—';
 
-  const peakTimesVal = formatPeakTimes(diagnostics.peakTimes);
+  const matchedVal = diagnostics.matchedBands != null
+    ? `${diagnostics.matchedBands} of 6 bands (threshold: ≥ 4)`
+    : '—';
+
+  const marginsVal = formatPerBandMargins(diagnostics.perBandMarginDb);
 
   const srVal = diagnostics.sampleRate ? `${diagnostics.sampleRate} Hz` : '—';
   const durVal = diagnostics.durationS != null && Number.isFinite(diagnostics.durationS)
@@ -188,14 +212,25 @@ export function formatDiagnosticsHtml(diagnostics) {
 
   const gateVal = diagnostics.gateFired || 'None';
 
+  // Support legacy fields if provided
+  const legacyRows = [];
+  if (diagnostics.orderingScore != null && Number.isFinite(diagnostics.orderingScore)) {
+    legacyRows.push(`<tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Ordering score:</td><td style="padding:3px 6px;">${diagnostics.orderingScore.toFixed(3)}</td></tr>`);
+  }
+  if (diagnostics.peakTimes != null && Array.isArray(diagnostics.peakTimes)) {
+    legacyRows.push(`<tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Per-band peak times:</td><td style="padding:3px 6px;">${escapeHtml(formatPeakTimes(diagnostics.peakTimes))}</td></tr>`);
+  }
+
   return `
 <table class="diagnostics-table" style="width:100%; border-collapse:collapse; font-size:0.85em; font-family:monospace; margin-top:4px;">
   <tbody>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8); width:35%;">Gate fired:</td><td style="padding:3px 6px; font-weight:600;">${escapeHtml(gateVal)}</td></tr>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">PNR:</td><td style="padding:3px 6px;">${escapeHtml(pnrVal)}</td></tr>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">deltaPostPre:</td><td style="padding:3px 6px;">${escapeHtml(deltaVal)}</td></tr>
-    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Ordering score:</td><td style="padding:3px 6px;">${escapeHtml(scoreVal)}</td></tr>
-    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Per-band peak times:</td><td style="padding:3px 6px;">${escapeHtml(peakTimesVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Sweep start (tStart):</td><td style="padding:3px 6px;">${escapeHtml(tStartVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Matched bands:</td><td style="padding:3px 6px;">${escapeHtml(matchedVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Per-band margins:</td><td style="padding:3px 6px;">${escapeHtml(marginsVal)}</td></tr>
+    ${legacyRows.join('\n    ')}
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Sample rate:</td><td style="padding:3px 6px;">${escapeHtml(srVal)}</td></tr>
     <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Duration:</td><td style="padding:3px 6px;">${escapeHtml(durVal)}</td></tr>
   </tbody>

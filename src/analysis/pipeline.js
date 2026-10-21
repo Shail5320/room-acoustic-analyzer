@@ -29,6 +29,13 @@ import {
   PNR_THRESHOLD_DB,
   LOW_PNR_OVERRIDE_MIN_DB,
   LOW_PNR_POST_PRE_MARGIN_DB,
+  TEMPLATE_GATE_WIN_HALF_S,
+  TEMPLATE_GATE_MIN_MARGIN_DB,
+  TEMPLATE_GATE_MIN_BANDS,
+  TEMPLATE_GATE_BLOCK_MS,
+  TEMPLATE_GATE_HOP_MS,
+  CLAP_MAX_SPREAD_S,
+  formatTemplateGateRejectMessage,
   SWEEP_SIG_MIN_SCORE,
   SWEEP_SIG_MIN_MONOTONIC_STEPS,
   SWEEP_SIG_MIN_SPAN_S,
@@ -130,39 +137,181 @@ export function downsampleCurve(t, y, targetPoints = EDC_PLOT_POINTS) {
 }
 
 // ---------------------------------------------------------------------------
-// Sweep Signature Validation (Octave Band Progression Gate)
+// Sweep Template Gate Validation (Predicted-Time Gate)
 // ---------------------------------------------------------------------------
 
 /**
- * Validate that the recording contains the expected exponential sine sweep
- * by verifying the sequential chronological progression of octave band energy peaks.
+ * Validate presence of the exponential test sweep using the predicted-time template gate.
  *
  * Principle:
- * An exponential sine sweep from f1 to f2 over duration T has an instantaneous frequency:
- *   f(t) = f1 * exp(t / L), where L = T / ln(f2 / f1).
- * Passing through successive octave band centres (125 to 4000 Hz) takes:
- *   Delta t = L * ln(2) ~= 0.683 s per octave step.
- * A genuine room sweep exhibits sequential energy peaks across all 6 octave bands
- * spaced approximately 0.68 s apart (total span t_4000 - t_125 ~= 3.41 s).
- * In contrast:
- *   - A hand clap or impulse puts energy into all bands at the exact same instant (dt ~= 0).
- *   - Ambient noise, speech bursts, or mains hum exhibit no systematic ordering.
+ *   1. Obtains sweep start time from deconvolution peak:
+ *      t_start = (peakIdx - (sweepLen - 1)) / fs.
+ *   2. Predicts expected octave center arrival times:
+ *      t_k = t_start + L * ln(fc_k / f1), where L = T / ln(f2 / f1).
+ *   3. Calculates band background as the median of 50 ms block energies (25 ms hop).
+ *   4. Evaluates energy margin in a +/- 0.15 s window around t_k relative to background:
+ *      margin_k = 10 * log10(mean energy in [t_k - 0.15, t_k + 0.15] / background).
+ *   5. Accepts when at least 4 of 6 bands exhibit margin >= 10 dB.
+ *   6. Windows falling outside recording bounds count as unmatched (-99 dB).
  *
  * @param {Float32Array|Float64Array} signal - Audio samples
  * @param {number} sampleRate - Audio sample rate (Hz)
- * @param {object} [options] - Pipeline options
+ * @param {number|null} [deconvPeakIdx=null] - Direct arrival peak index from deconvolution
+ * @param {number|null} [sweepLengthSamples=null] - Length of synthesized sweep in samples
+ * @param {object} [options={}] - Pipeline options
  * @returns {{
  *   ok: boolean,
- *   score: number,
- *   monotonicCount: number,
- *   dtValidCount: number,
- *   totalSpan: number,
- *   meanDtError: number,
+ *   matchedBands: number,
+ *   requiredBands: number,
+ *   tStart: number,
+ *   tStartRaw: number,
+ *   perBandMarginDb: number[],
  *   peakTimes: number[],
- *   dtList: number[]
+ *   isClap: boolean,
+ *   peakSpreadS: number
  * }}
  */
-export function checkSweepSignature(signal, sampleRate, options = {}) {
+export function checkSweepTemplate(signal, sampleRate, deconvPeakIdx = null, sweepLengthSamples = null, options = {}) {
+  const f1 = options.f1 || SWEEP_F1;
+  const f2 = options.f2 || SWEEP_F2;
+  const T = options.T || SWEEP_DURATION_S;
+  const fadeMs = options.fadeMs || SWEEP_FADE_MS;
+  const centres = options.octaveCentres || OCTAVE_CENTRES;
+  const winHalfS = options.templateGateWinHalfS ?? TEMPLATE_GATE_WIN_HALF_S;
+  const minMarginDb = options.templateGateMinMarginDb ?? TEMPLATE_GATE_MIN_MARGIN_DB;
+  const minBands = options.templateGateMinBands ?? TEMPLATE_GATE_MIN_BANDS;
+  const blockMs = options.templateGateBlockMs ?? TEMPLATE_GATE_BLOCK_MS;
+  const hopMs = options.templateGateHopMs ?? TEMPLATE_GATE_HOP_MS;
+  const clapSpreadMaxS = options.clapMaxSpreadS ?? CLAP_MAX_SPREAD_S;
+
+  if (!signal || signal.length === 0) {
+    return {
+      ok: false,
+      matchedBands: 0,
+      requiredBands: minBands,
+      tStart: 0,
+      tStartRaw: 0,
+      perBandMarginDb: centres.map(() => -99.0),
+      peakTimes: [],
+      isClap: false,
+      peakSpreadS: 0,
+    };
+  }
+
+  let peakIdx = deconvPeakIdx;
+  let sweepLen = sweepLengthSamples;
+
+  if (peakIdx == null || sweepLen == null) {
+    const sweep = generateSweep(f1, f2, T, sampleRate, fadeMs);
+    sweepLen = sweep.length;
+    const invFilter = generateInverseFilter(sweep, f1, f2, T, sampleRate);
+    const hFull = deconvolve(signal, invFilter);
+    const { peakIdx: foundPeak } = findPeakAndPNR(hFull, sampleRate, PRE_PEAK_MS);
+    peakIdx = foundPeak;
+  }
+
+  const tStart = (peakIdx - (sweepLen - 1)) / sampleRate;
+  const L = T / Math.log(f2 / f1);
+
+  const filters = designOctaveFilters(sampleRate, centres);
+  const blk = Math.round(blockMs * 1e-3 * sampleRate);
+  const hop = Math.round(hopMs * 1e-3 * sampleRate);
+
+  let matchedBands = 0;
+  const perBandMarginDb = [];
+  const peakTimes = [];
+
+  for (const fc of centres) {
+    const sos = filters.get(fc);
+    const f = sosFilt(sos, signal);
+
+    // 1. Background: median of 50 ms block energies (25 ms hop)
+    const nh = Math.max(1, Math.floor((f.length - blk) / hop) + 1);
+    const blockEnergies = new Float64Array(nh);
+    let maxBlockEnergy = 0;
+    let maxHop = 0;
+
+    for (let i = 0; i < nh; i++) {
+      let sumSq = 0;
+      const start = i * hop;
+      for (let j = 0; j < blk; j++) {
+        const val = f[start + j];
+        sumSq += val * val;
+      }
+      const meanEnergy = sumSq / blk;
+      blockEnergies[i] = meanEnergy;
+      if (meanEnergy > maxBlockEnergy) {
+        maxBlockEnergy = meanEnergy;
+        maxHop = i;
+      }
+    }
+
+    const tPeak = (maxHop * hop + blk / 2) / sampleRate;
+    peakTimes.push(tPeak);
+
+    const sortedEnergies = Array.from(blockEnergies).sort((a, b) => a - b);
+    const mid = Math.floor(sortedEnergies.length / 2);
+    const bg = (sortedEnergies.length % 2 === 0
+      ? (sortedEnergies[mid - 1] + sortedEnergies[mid]) / 2
+      : sortedEnergies[mid]) + 1e-18;
+
+    // 2. Expected arrival time and window around t_k
+    const tk = tStart + L * Math.log(fc / f1);
+    const a = Math.floor((tk - winHalfS) * sampleRate);
+    const b = Math.floor((tk + winHalfS) * sampleRate);
+
+    // Windows outside the recording count as unmatched
+    if (a < 0 || b > f.length || b <= a) {
+      perBandMarginDb.push(-99.0);
+      continue;
+    }
+
+    let sumWin = 0;
+    for (let i = a; i < b; i++) {
+      const val = f[i];
+      sumWin += val * val;
+    }
+    const meanWinEnergy = sumWin / (b - a);
+    const margin = 10.0 * Math.log10(meanWinEnergy / bg + 1e-18);
+    const roundedMargin = Math.round(margin * 10) / 10;
+    perBandMarginDb.push(roundedMargin);
+
+    if (roundedMargin >= minMarginDb) {
+      matchedBands++;
+    }
+  }
+
+  const ok = matchedBands >= minBands;
+
+  // Clap detection: all six band energy peaks fall within 0.15 s of each other
+  const peakSpreadS = peakTimes.length > 0
+    ? Math.max(...peakTimes) - Math.min(...peakTimes)
+    : 0;
+  const isClap = peakTimes.length === 6 && peakSpreadS <= clapSpreadMaxS;
+
+  return {
+    ok,
+    matchedBands,
+    requiredBands: minBands,
+    tStart: Math.round(tStart * 1000) / 1000,
+    tStartRaw: tStart,
+    perBandMarginDb,
+    peakTimes,
+    isClap,
+    peakSpreadS: Math.round(peakSpreadS * 1000) / 1000,
+    peakIdx,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Legacy Sweep Signature Validation (Octave Band Progression Gate - battery only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Legacy chronological octave band progression gate retained for battery benchmarking.
+ * Not used by the primary analysis pipeline.
+ */
+export function legacyCheckSweepSignature(signal, sampleRate, options = {}) {
   if (!signal || signal.length === 0) {
     return { ok: false, score: 0, monotonicCount: 0, dtValidCount: 0, totalSpan: 0, meanDtError: 0, peakTimes: [], dtList: [] };
   }
@@ -238,10 +387,6 @@ export function checkSweepSignature(signal, sampleRate, options = {}) {
 
   const spanOk = totalSpan >= minSpan && totalSpan <= maxSpan;
 
-  // Composite score:
-  // 40% weight on monotonicity ratio (intervals > 50ms)
-  // 30% weight on interval closeness to theoretical 0.68s
-  // 30% weight on total span closeness to theoretical 3.41s
   const score = (
     0.40 * (monotonicCount / Math.max(1, peakTimes.length - 1)) +
     0.30 * Math.max(0, 1.0 - meanDtError / expectedDt) +
@@ -261,6 +406,9 @@ export function checkSweepSignature(signal, sampleRate, options = {}) {
     dtList,
   };
 }
+
+// Backward compatibility alias for battery script / external callers
+export const checkSweepSignature = legacyCheckSweepSignature;
 
 // ---------------------------------------------------------------------------
 // Main Analysis Pipeline (Pure, No DOM)
@@ -346,6 +494,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      tStart: null,
+      perBandMarginDb: null,
+      matchedBands: null,
       sampleRate: sampleRate || null,
       durationS: 0,
       deltaPostPreDb: null,
@@ -355,9 +506,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         pnrThresholdDb: PNR_THRESHOLD_DB,
         deltaPostPreDb: null,
         deltaPostPreThresholdDb: LOW_PNR_POST_PRE_MARGIN_DB,
-        orderingScore: null,
-        orderingThreshold: SWEEP_SIG_MIN_SCORE,
-        peakTimes: null,
+        tStart: null,
+        matchedBands: null,
+        perBandMarginDb: null,
         sampleRate: sampleRate || null,
         durationS: 0,
         gateFired: 'Sample length gate',
@@ -384,6 +535,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      tStart: null,
+      perBandMarginDb: null,
+      matchedBands: null,
       sampleRate: sampleRate || 0,
       durationS: dur,
       deltaPostPreDb: null,
@@ -393,9 +547,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         pnrThresholdDb: PNR_THRESHOLD_DB,
         deltaPostPreDb: null,
         deltaPostPreThresholdDb: LOW_PNR_POST_PRE_MARGIN_DB,
-        orderingScore: null,
-        orderingThreshold: SWEEP_SIG_MIN_SCORE,
-        peakTimes: null,
+        tStart: null,
+        matchedBands: null,
+        perBandMarginDb: null,
         sampleRate: sampleRate || 0,
         durationS: dur,
         gateFired: 'Sample rate gate',
@@ -423,6 +577,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      tStart: null,
+      perBandMarginDb: null,
+      matchedBands: null,
       sampleRate,
       durationS: Math.round(durationS * 100) / 100,
       deltaPostPreDb: null,
@@ -432,9 +589,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         pnrThresholdDb: options.pnrThresholdDb || PNR_THRESHOLD_DB,
         deltaPostPreDb: null,
         deltaPostPreThresholdDb: options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB,
-        orderingScore: null,
-        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
-        peakTimes: null,
+        tStart: null,
+        matchedBands: null,
+        perBandMarginDb: null,
         sampleRate,
         durationS: Math.round(durationS * 100) / 100,
         gateFired: 'Duration gate (too short)',
@@ -458,6 +615,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      tStart: null,
+      perBandMarginDb: null,
+      matchedBands: null,
       sampleRate,
       durationS: Math.round(durationS * 100) / 100,
       deltaPostPreDb: null,
@@ -467,9 +627,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         pnrThresholdDb: options.pnrThresholdDb || PNR_THRESHOLD_DB,
         deltaPostPreDb: null,
         deltaPostPreThresholdDb: options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB,
-        orderingScore: null,
-        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
-        peakTimes: null,
+        tStart: null,
+        matchedBands: null,
+        perBandMarginDb: null,
         sampleRate,
         durationS: Math.round(durationS * 100) / 100,
         gateFired: 'Duration gate (too long)',
@@ -502,6 +662,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      tStart: null,
+      perBandMarginDb: null,
+      matchedBands: null,
       sampleRate,
       durationS: Math.round(durationS * 100) / 100,
       deltaPostPreDb: null,
@@ -511,9 +674,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         pnrThresholdDb: options.pnrThresholdDb || PNR_THRESHOLD_DB,
         deltaPostPreDb: null,
         deltaPostPreThresholdDb: options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB,
-        orderingScore: null,
-        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
-        peakTimes: null,
+        tStart: null,
+        matchedBands: null,
+        perBandMarginDb: null,
         sampleRate,
         durationS: Math.round(durationS * 100) / 100,
         gateFired: 'Silence gate',
@@ -573,26 +736,31 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
   const lowPnrFloor = options.lowPnrOverrideMinDb ?? LOW_PNR_OVERRIDE_MIN_DB;
   const lowPnrMargin = options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB;
 
-  // Sweep-signature gate: verify the recording contains our test sweep progression
-  const tSigStart = performance.now();
-  const sweepSig = checkSweepSignature(signal, sampleRate, options);
-  timingsMs.sweepSigMs = performance.now() - tSigStart;
+  // Template gate: verify the recording contains our test sweep at predicted arrival times
+  // Reuses deconvolution peak (no second FFT)
+  const tGateStart = performance.now();
+  const templateGate = checkSweepTemplate(signal, sampleRate, peakIdx, sweep.length, options);
+  timingsMs.templateGateMs = performance.now() - tGateStart;
 
   // The low-PNR override is strictly gated by all three criteria:
   // 1. PNR inside [lowPnrFloor, pnrThreshold)
   // 2. Post-peak direct energy margin >= 1.5 dB (excludes stationary noise)
-  // 3. Sweep signature progression confirmed (excludes claps, pops, and bursts)
+  // 3. Template gate confirmed (excludes claps, pops, and bursts)
   const canOverrideLowPnr = (peakVal > 1e-12) &&
     (roundedPnrDb >= lowPnrFloor) &&
     (roundedPnrDb < pnrThreshold) &&
     (deltaPostPreDb >= lowPnrMargin) &&
-    sweepSig.ok;
+    templateGate.ok;
 
-  // Gate 1: Sweep signature check (applies to normal path and override path)
-  if (!sweepSig.ok) {
+  // Gate 1: Template gate check (applies to normal path and override path)
+  if (!templateGate.ok) {
     let rejectReason;
     if (roundedPnrDb >= pnrThreshold || (peakVal > 1e-12 && deltaPostPreDb >= lowPnrMargin)) {
-      rejectReason = SWEEP_REJECT_NOT_SWEEP;
+      if (templateGate.isClap) {
+        rejectReason = SWEEP_REJECT_NOT_SWEEP;
+      } else {
+        rejectReason = formatTemplateGateRejectMessage(templateGate.matchedBands);
+      }
     } else {
       rejectReason = SWEEP_REJECT_NO_SWEEP;
     }
@@ -611,22 +779,25 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
-      sweepSignature: sweepSig,
+      tStart: templateGate.tStart,
+      perBandMarginDb: templateGate.perBandMarginDb,
+      matchedBands: templateGate.matchedBands,
+      templateGate,
       sampleRate,
       durationS: Math.round(durationS * 100) / 100,
       deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
-      gateFired: 'Sweep signature gate',
+      gateFired: 'Template gate',
       diagnostics: {
         pnrDb: roundedPnrDb,
         pnrThresholdDb: pnrThreshold,
         deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
         deltaPostPreThresholdDb: lowPnrMargin,
-        orderingScore: sweepSig.score,
-        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
-        peakTimes: sweepSig.peakTimes || null,
+        tStart: templateGate.tStart,
+        matchedBands: templateGate.matchedBands,
+        perBandMarginDb: templateGate.perBandMarginDb,
         sampleRate,
         durationS: Math.round(durationS * 100) / 100,
-        gateFired: 'Sweep signature gate',
+        gateFired: 'Template gate',
       },
       timingsMs: {
         ...timingsMs,
@@ -660,7 +831,10 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         irPlot: null,
         edcPlot: null,
         bands: null,
-        sweepSignature: sweepSig,
+        tStart: templateGate.tStart,
+        perBandMarginDb: templateGate.perBandMarginDb,
+        matchedBands: templateGate.matchedBands,
+        templateGate,
         sampleRate,
         durationS: Math.round(durationS * 100) / 100,
         deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
@@ -670,9 +844,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
           pnrThresholdDb: pnrThreshold,
           deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
           deltaPostPreThresholdDb: lowPnrMargin,
-          orderingScore: sweepSig.score,
-          orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
-          peakTimes: sweepSig.peakTimes || null,
+          tStart: templateGate.tStart,
+          matchedBands: templateGate.matchedBands,
+          perBandMarginDb: templateGate.perBandMarginDb,
           sampleRate,
           durationS: Math.round(durationS * 100) / 100,
           gateFired: 'PNR gate',
@@ -810,9 +984,9 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
     pnrThresholdDb: pnrThreshold,
     deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
     deltaPostPreThresholdDb: lowPnrMargin,
-    orderingScore: sweepSig.score,
-    orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
-    peakTimes: sweepSig.peakTimes || null,
+    tStart: templateGate.tStart,
+    matchedBands: templateGate.matchedBands,
+    perBandMarginDb: templateGate.perBandMarginDb,
     sampleRate,
     durationS: Math.round(durationS * 100) / 100,
     gateFired,
@@ -832,7 +1006,10 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
     irPlot,
     edcPlot,
     bands,
-    sweepSignature: sweepSig,
+    tStart: templateGate.tStart,
+    perBandMarginDb: templateGate.perBandMarginDb,
+    matchedBands: templateGate.matchedBands,
+    templateGate,
     sampleRate,
     durationS: Math.round(durationS * 100) / 100,
     deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,

@@ -115,8 +115,9 @@ test('Diagnostics Formatting - formatDiagnosticsHtml outputs collapsed details c
     pnrThresholdDb: 20.0,
     deltaPostPreDb: 6.2,
     deltaPostPreThresholdDb: 1.5,
-    orderingScore: 0.948,
-    orderingThreshold: 0.65,
+    tStart: 1.00,
+    matchedBands: 6,
+    perBandMarginDb: [54.5, 43.7, 37.9, 38.8, 46.5, 51.9],
     sampleRate: 48000,
     durationS: 8.50,
     gateFired: 'None (All gates passed)',
@@ -125,7 +126,9 @@ test('Diagnostics Formatting - formatDiagnosticsHtml outputs collapsed details c
   assert.match(validHtml, /Gate fired:.*None \(All gates passed\)/);
   assert.match(validHtml, /PNR:.*28\.5 dB \(threshold: ≥ 20\.0 dB\)/);
   assert.match(validHtml, /deltaPostPre:.*6\.2 dB \(threshold: ≥ 1\.5 dB\)/);
-  assert.match(validHtml, /Ordering score:.*0\.948 \(threshold: ≥ 0\.650\)/);
+  assert.match(validHtml, /Sweep start \(tStart\):.*1\.00 s/);
+  assert.match(validHtml, /Matched bands:.*6 of 6 bands/);
+  assert.match(validHtml, /Per-band margins:.*125Hz: \+54\.5 dB/);
   assert.match(validHtml, /Sample rate:.*48000 Hz/);
   assert.match(validHtml, /Duration:.*8\.50 s/);
 
@@ -135,17 +138,18 @@ test('Diagnostics Formatting - formatDiagnosticsHtml outputs collapsed details c
     pnrThresholdDb: 20.0,
     deltaPostPreDb: 9.1,
     deltaPostPreThresholdDb: 1.5,
-    orderingScore: 0.0,
-    orderingThreshold: 0.65,
+    tStart: -2.83,
+    matchedBands: 0,
+    perBandMarginDb: [-99.0, -99.0, -99.0, -99.0, -99.0, -99.0],
     sampleRate: 48000,
     durationS: 8.50,
-    gateFired: 'Sweep signature gate',
+    gateFired: 'Template gate',
   });
 
-  assert.match(rejectedHtml, /Gate fired:.*Sweep signature gate/);
+  assert.match(rejectedHtml, /Gate fired:.*Template gate/);
   assert.match(rejectedHtml, /PNR:.*19\.8 dB/);
   assert.match(rejectedHtml, /deltaPostPre:.*9\.1 dB/);
-  assert.match(rejectedHtml, /Ordering score:.*0\.000/);
+  assert.match(rejectedHtml, /Matched bands:.*0 of 6 bands/);
 
   // 3. Fallback on missing data
   assert.match(formatDiagnosticsHtml(null), /No diagnostic data available/);

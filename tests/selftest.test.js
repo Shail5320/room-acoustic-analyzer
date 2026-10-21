@@ -365,14 +365,14 @@ test('Self-Test: Background noise ladder reduces PNR monotonically and degrades 
     'Tiers must degrade at -12 dB noise'
   );
 
-  // 4. -6 dB step: further degradation with dynamic range <= 25 dB
-  assert.strictEqual(results[4].ok, true);
-  assert.ok(results[4].dynamicRangeDb <= 25.0, 'Dynamic range must drop to <= 25 dB at -6 dB noise');
+  // 4. -6 dB step: rejected by template gate due to noise floor submerging upper bands (only 3 of 6 bands >= 10 dB margin)
+  assert.strictEqual(results[4].ok, false, '-6 dB noise must be rejected by template gate');
+  assert.match(results[4].rejectReason, /Couldn't confirm the EchoMap test sweep/);
 
   // 5. 0 dB step: noise equals response peak, PNR drops below 20 dB threshold -> REJECT
   assert.strictEqual(results[5].ok, false, '0 dB noise must be rejected');
   assert.ok(results[5].pnrDb < 20.0, '0 dB noise PNR must be < 20 dB');
-  assert.match(results[5].rejectReason, /sweep detected|pnr/i);
+  assert.match(results[5].rejectReason, /sweep|pnr/i);
 
   // 6. Retain simulated tags across all results
   for (const res of results) {

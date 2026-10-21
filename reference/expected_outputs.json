@@ -1182,5 +1182,35 @@
         }
       }
     }
+  },
+  "gate": {
+    "single_recording": {
+      "ok": true,
+      "matched_bands": 6,
+      "t_start_s": 0.002875,
+      "t_start_rounded_s": 0.0,
+      "margins_db": [
+        54.5,
+        43.7,
+        37.9,
+        38.8,
+        46.5,
+        51.9
+      ]
+    },
+    "multi_recording": {
+      "ok": true,
+      "matched_bands": 6,
+      "t_start_s": 0.017521,
+      "t_start_rounded_s": 0.02,
+      "margins_db": [
+        56.8,
+        48.9,
+        42.4,
+        40.6,
+        47.2,
+        54.8
+      ]
+    }
   }
 }
