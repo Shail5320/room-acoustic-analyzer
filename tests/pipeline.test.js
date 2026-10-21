@@ -36,7 +36,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { analyzeRecording } from '../src/analysis/pipeline.js';
+import { analyzeRecording, checkSweepSignature } from '../src/analysis/pipeline.js';
 import { runAnalysis } from '../src/analysis/run.js';
 import {
   SWEEP_F1,
@@ -51,6 +51,7 @@ import {
   LOW_PNR_POST_PRE_MARGIN_DB,
   SWEEP_REJECT_NOT_SWEEP,
   SWEEP_REJECT_NO_SWEEP,
+  SWEEP_SIG_MIN_SCORE,
 } from '../src/analysis/config.js';
 import { generateSweep, generateInverseFilter } from '../src/dsp/sweep.js';
 import { convolveDirect, deconvolve, findPeakAndPNR } from '../src/dsp/deconvolve.js';
@@ -792,16 +793,17 @@ test('Pipeline: Non-stationary noise tests without sweep present (clap, burst, 5
   }
   console.log('-'.repeat(110));
 
-  console.log('\n  [Non-Stationary Noise Findings Plain Report]:');
-  console.log('  - Case (a) (Single clap-like decaying burst): Offers the override (canOverrideLowPnr: true) with');
-  console.log('    PNR = 19.8 dB and DeltaPostPre = 9.1 dB (well above the 1.5 dB margin). When the override is enabled,');
-  console.log('    it returns valid-looking numbers in upper bands: 2000 Hz = 1.24 s (approximate, R^2 = 0.993) and');
-  console.log('    4000 Hz = 1.71 s (approximate, R^2 = 0.991) despite NO sweep being present. The impulsive clap deconvolution');
-  console.log('    with the inverse sweep creates an artificial decay chirp that satisfies Schroeder regression.');
-  console.log('  - Case (b) (Stationary noise + loud burst near max): Offers the override (PNR = 15.1 dB, DeltaPostPre = 4.6 dB),');
-  console.log('    but returns 0 valid or approximate bands (all 6 bands classified invalid due to dynamic range < 25 dB).');
-  console.log('  - Case (c) (50 Hz hum + noise): Override is NOT offered (canOverrideLowPnr: false) because DeltaPostPre = -0.2 dB,');
-  console.log('    which is safely blocked by the 1.5 dB energy margin gate.\n');
+  console.log('\n  [Non-Stationary Noise Findings Plain Report (Sweep-Signature Protected)]:');
+  console.log('  - All three non-sweep cases are rejected by the sweep-signature gate (ordering score < 0.650 threshold):');
+  console.log('  - Case (a) (Single clap-like decaying burst): Rejected with "This doesn\'t look like the EchoMap test sweep...');
+  console.log('    (a clap or another sound was recorded instead)". Score = 0.000 vs 0.650. canOverrideLowPnr is false.');
+  console.log('    Previously, without the signature gate, deconvolution reconstructed the inverse filter chirp and returned');
+  console.log('    artificial RT60 numbers at 2 kHz and 4 kHz. The sweep-signature gate now completely blocks this.');
+  console.log('  - Case (b) (Stationary noise + loud burst near max): Rejected with "This doesn\'t look like the EchoMap test sweep...".');
+  console.log('    Score = 0.000 vs 0.650. canOverrideLowPnr is false.');
+  console.log('  - Case (c) (50 Hz hum + noise): Rejected with "No sweep detected — make sure the source played during recording".');
+  console.log('    Score = 0.395 vs 0.650 and DeltaPostPre = -0.2 dB (blocked by both the signature gate and the 1.5 dB energy margin).');
+  console.log('    canOverrideLowPnr is false, and passing allowLowPnr: true refuses internally.\n');
 
   // Assertions verifying that sweep-signature and deltaPostPre gates block non-sweep cases
   const metricsA = computeDeltaPostPreLocal(clapSignal);
@@ -872,6 +874,261 @@ test('Pipeline: Sweep signature gate — clap regression test (clean and noisy c
   const resForcedClap = analyzeRecording({ samples: noisyClap, sampleRate, options: { allowLowPnr: true } });
   assert.strictEqual(resForcedClap.ok, false, 'Clap with allowLowPnr: true must refuse internally');
   assert.strictEqual(resForcedClap.bands, null);
+
+  // 4. Verify diagnostics object is populated on rejection
+  assert.ok(resCleanClap.diagnostics, 'diagnostics must be present on rejection');
+  assert.strictEqual(resCleanClap.diagnostics.gateFired, 'Sweep signature gate');
+  assert.strictEqual(resCleanClap.diagnostics.sampleRate, 48000);
+  assert.strictEqual(resCleanClap.diagnostics.orderingScore, 0.0);
+});
+
+test('Pipeline: Sweep-signature gate — positive-side evidence across offsets, targets, ladders and negatives', () => {
+  const sampleRate = 48000;
+  const tableRows = [];
+
+  function recordRow(category, label, score, ok, expectedVerdict) {
+    const margin = score >= SWEEP_SIG_MIN_SCORE
+      ? score - SWEEP_SIG_MIN_SCORE
+      : SWEEP_SIG_MIN_SCORE - score;
+    const verdict = ok ? 'ACCEPTED (PASS)' : 'REJECTED (FAIL)';
+    tableRows.push({
+      category,
+      label,
+      score: Math.round(score * 1000) / 1000,
+      margin: Math.round(margin * 1000) / 1000,
+      verdict,
+      ok,
+      expectedVerdict,
+    });
+  }
+
+  // 1. Clean Fixtures
+  const cleanSingle = loadRecordingFixturePadded('fake_recording_single.bin', 8.0, 48000);
+  const sigSingle = checkSweepSignature(cleanSingle, 48000);
+  assert.strictEqual(sigSingle.ok, true, 'Clean Single fixture must pass sweep signature');
+  recordRow('Clean Fixture', 'Clean Single (RT60=0.8s, 48kHz)', sigSingle.score, sigSingle.ok, 'ACCEPTED');
+
+  const cleanMulti = loadRecordingFixturePadded('fake_recording_multi.bin', 8.0, 48000);
+  const sigMulti = checkSweepSignature(cleanMulti, 48000);
+  assert.strictEqual(sigMulti.ok, true, 'Clean Multi fixture must pass sweep signature');
+  recordRow('Clean Fixture', 'Clean Multi-band (48kHz)', sigMulti.score, sigMulti.ok, 'ACCEPTED');
+
+  // 2. 44.1 kHz Fixture
+  const fs44 = 44100;
+  const sweep44 = generateSweep(SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, fs44, SWEEP_FADE_MS);
+  const irLen44 = Math.round(2.5 * fs44);
+  const rng44 = createMulberry32(303);
+  const ir44 = new Float64Array(irLen44);
+  const decay44 = 6.907755 / 0.8;
+  for (let i = 0; i < irLen44; i++) ir44[i] = rng44() * Math.exp(-decay44 * (i / fs44));
+  let maxIr44 = 0;
+  for (let i = 0; i < irLen44; i++) if (Math.abs(ir44[i]) > maxIr44) maxIr44 = Math.abs(ir44[i]);
+  for (let i = 0; i < irLen44; i++) ir44[i] /= maxIr44;
+  const rec44 = convolveDirect(sweep44, ir44);
+  const rec44Padded = new Float64Array(Math.round(8.5 * fs44));
+  rec44Padded.set(rec44);
+  const sig44 = checkSweepSignature(rec44Padded, fs44);
+  assert.strictEqual(sig44.ok, true, '44.1 kHz synthetic recording must pass sweep signature');
+  recordRow('Clean Fixture', 'Clean 44.1 kHz Synthetic (RT60=0.8s)', sig44.score, sig44.ok, 'ACCEPTED');
+
+  // 3. Sweep offsets inside a 30s recording (0.5s, 3s, 10s, 20s)
+  const total30sSamples = Math.round(30.0 * 48000);
+  const sweep48 = generateSweep(SWEEP_F1, SWEEP_F2, SWEEP_DURATION_S, 48000, SWEEP_FADE_MS);
+  const ir48 = new Float64Array(Math.round(2.5 * 48000));
+  const rngIr = createMulberry32(101);
+  for (let i = 0; i < ir48.length; i++) ir48[i] = rngIr() * Math.exp(-(6.907755 / 0.8) * (i / 48000));
+  const roomResp = convolveDirect(sweep48, ir48);
+
+  for (const offsetS of [0.5, 3.0, 10.0, 20.0]) {
+    const buf30s = new Float64Array(total30sSamples);
+    const offsetSamples = Math.round(offsetS * 48000);
+    buf30s.set(roomResp.subarray(0, total30sSamples - offsetSamples), offsetSamples);
+    const sigOffset = checkSweepSignature(buf30s, 48000);
+    assert.strictEqual(sigOffset.ok, true, `Sweep at offset ${offsetS}s inside 30s must pass signature`);
+    recordRow('Sweep Offsets (30s)', `Sweep at offset ${offsetS} s`, sigOffset.score, sigOffset.ok, 'ACCEPTED');
+  }
+
+  // 4. Rooms with RT60 0.3, 0.8 and 1.5 s
+  for (const rtTarget of [0.3, 0.8, 1.5]) {
+    const sim = simulateRoomRecording({ rtTarget, seed: 101 });
+    const sigRoom = checkSweepSignature(sim.samples, 48000);
+    assert.strictEqual(sigRoom.ok, true, `Room RT60 ${rtTarget}s must pass signature`);
+    recordRow('Room RT60 Targets', `Room RT60 = ${rtTarget} s (seed 101)`, sigRoom.score, sigRoom.ok, 'ACCEPTED');
+  }
+
+  // Helper for brown noise
+  function makeBrown(length, rng) {
+    const noise = new Float64Array(length);
+    let last = 0;
+    for (let i = 0; i < length; i++) {
+      const white = boxMuller(rng);
+      last = 0.995 * last + white * 0.1;
+      noise[i] = last;
+    }
+    return noise;
+  }
+
+  // 5. White Noise Ladder steps (None, -25, -18, -12, -6, 0 dB)
+  const ladderSteps = [
+    { label: 'None (clean)', noiseDb: null },
+    { label: '-25 dB', noiseDb: -25 },
+    { label: '-18 dB', noiseDb: -18 },
+    { label: '-12 dB', noiseDb: -12 },
+    { label: '-6 dB', noiseDb: -6 },
+    { label: '0 dB', noiseDb: 0 },
+  ];
+
+  for (const step of ladderSteps) {
+    const sim = simulateRoomRecording({ rtTarget: 0.8, seed: 1080, noiseLevelDb: step.noiseDb });
+    const sigWhite = checkSweepSignature(sim.samples, 48000);
+    assert.strictEqual(sigWhite.ok, true, `White noise ${step.label} must pass signature`);
+    recordRow('White Noise Ladder', `White noise: ${step.label}`, sigWhite.score, sigWhite.ok, 'ACCEPTED');
+  }
+
+  // 6. Brown Noise Ladder steps (None, -25, -18, -12, -6, 0 dB)
+  for (const step of ladderSteps) {
+    const sim = simulateRoomRecording({ rtTarget: 0.8, seed: 1080 });
+    if (step.noiseDb != null) {
+      const rng = createMulberry32(1080);
+      const rawBrown = makeBrown(sim.samples.length, rng);
+      let peak = 0;
+      for (let i = 0; i < sim.samples.length; i++) {
+        const a = Math.abs(sim.samples[i]);
+        if (a > peak) peak = a;
+      }
+      let sumSq = 0;
+      for (let i = 0; i < rawBrown.length; i++) sumSq += rawBrown[i] ** 2;
+      const rawRms = Math.sqrt(sumSq / rawBrown.length) || 1;
+      const targetRms = peak * Math.pow(10, step.noiseDb / 20.0);
+      const scale = targetRms / rawRms;
+      for (let i = 0; i < sim.samples.length; i++) {
+        sim.samples[i] += rawBrown[i] * scale;
+      }
+    }
+    const sigBrown = checkSweepSignature(sim.samples, 48000);
+    assert.strictEqual(sigBrown.ok, true, `Brown noise ${step.label} must pass signature`);
+    recordRow('Brown Noise Ladder', `Brown noise: ${step.label}`, sigBrown.score, sigBrown.ok, 'ACCEPTED');
+  }
+
+  // 7. Negative Cases
+  const total85 = Math.round(8.5 * 48000);
+
+  // (a) Clean loud clap
+  const cleanClap = new Float64Array(total85);
+  const rngClap = createMulberry32(999);
+  const clapStart = Math.round(2.0 * 48000);
+  for (let i = 0; i < Math.round(0.5 * 48000); i++) {
+    const t = i / 48000;
+    cleanClap[clapStart + i] = boxMuller(rngClap) * 0.8 * Math.exp(-t / 0.03);
+  }
+  const sigCleanClap = checkSweepSignature(cleanClap, 48000);
+  assert.strictEqual(sigCleanClap.ok, false, 'Clean clap must be rejected by signature gate');
+  recordRow('Negative Cases', 'Clean Loud Clap (impulse)', sigCleanClap.score, sigCleanClap.ok, 'REJECTED');
+
+  // (b) Noisy clap
+  const noisyClap = new Float64Array(total85);
+  for (let i = 0; i < total85; i++) noisyClap[i] = boxMuller(rngClap) * 0.005;
+  for (let i = 0; i < Math.round(0.5 * 48000); i++) {
+    const t = i / 48000;
+    noisyClap[clapStart + i] += boxMuller(rngClap) * 0.3 * Math.exp(-t / 0.03);
+  }
+  const sigNoisyClap = checkSweepSignature(noisyClap, 48000);
+  assert.strictEqual(sigNoisyClap.ok, false, 'Noisy clap must be rejected by signature gate');
+  recordRow('Negative Cases', 'Noisy Clap (clap + noise)', sigNoisyClap.score, sigNoisyClap.ok, 'REJECTED');
+
+  // (c) Noise plus burst
+  const burstSignal = new Float64Array(total85);
+  const rngBurst = createMulberry32(404);
+  for (let i = 0; i < total85; i++) burstSignal[i] = (rngBurst() - 0.5) * 0.002;
+  const burstStart = Math.round(7.5 * 48000);
+  for (let i = 0; i < Math.round(0.05 * 48000); i++) {
+    burstSignal[burstStart + i] += (rngBurst() - 0.5) * 0.8;
+  }
+  const sigBurst = checkSweepSignature(burstSignal, 48000);
+  assert.strictEqual(sigBurst.ok, false, 'Noise + burst must be rejected by signature gate');
+  recordRow('Negative Cases', 'Noise + sudden burst', sigBurst.score, sigBurst.ok, 'REJECTED');
+
+  // (d) 50 Hz hum + noise
+  const humSignal = new Float64Array(total85);
+  const rngHum = createMulberry32(505);
+  for (let i = 0; i < total85; i++) humSignal[i] = (rngHum() - 0.5) * 0.004;
+  for (let i = 0; i < total85; i++) {
+    humSignal[i] += 0.05 * Math.sin(2.0 * Math.PI * 50.0 * (i / 48000));
+  }
+  const sigHum = checkSweepSignature(humSignal, 48000);
+  assert.strictEqual(sigHum.ok, false, '50 Hz hum + noise must be rejected by signature gate');
+  recordRow('Negative Cases', '50 Hz hum + noise', sigHum.score, sigHum.ok, 'REJECTED');
+
+  // (e) Pure noise only
+  const pureWhite = new Float64Array(total85);
+  const rngPure = createMulberry32(606);
+  for (let i = 0; i < total85; i++) pureWhite[i] = boxMuller(rngPure) * 0.05;
+  const sigPureWhite = checkSweepSignature(pureWhite, 48000);
+  assert.strictEqual(sigPureWhite.ok, false, 'Pure white noise must be rejected by signature gate');
+  recordRow('Negative Cases', 'Pure white noise', sigPureWhite.score, sigPureWhite.ok, 'REJECTED');
+
+  const pureBrown = makeBrown(total85, rngPure);
+  const sigPureBrown = checkSweepSignature(pureBrown, 48000);
+  assert.strictEqual(sigPureBrown.ok, false, 'Pure brown noise must be rejected by signature gate');
+  recordRow('Negative Cases', 'Pure brown noise', sigPureBrown.score, sigPureBrown.ok, 'REJECTED');
+
+  // (f) Pure silence
+  const silence = new Float64Array(total85);
+  const sigSilence = checkSweepSignature(silence, 48000);
+  assert.strictEqual(sigSilence.ok, false, 'Pure silence must be rejected by signature gate');
+  recordRow('Negative Cases', 'Pure silence', sigSilence.score, sigSilence.ok, 'REJECTED');
+
+  // Print Formatted Evidence Table
+  console.log('\n=============================================================================================================');
+  console.log('Phase 3a-2e: Sweep-Signature Gate Positive & Negative Evidence Verification Matrix');
+  console.log('Rejection Threshold: Ordering Score >= ' + SWEEP_SIG_MIN_SCORE.toFixed(3));
+  console.log('=============================================================================================================');
+  console.log('Category               | Test Case / Signal Description                | Score | Margin to Thr | Verdict');
+  console.log('-----------------------+-----------------------------------------------+-------+---------------+-----------------');
+  for (const row of tableRows) {
+    const marginSign = row.score >= SWEEP_SIG_MIN_SCORE ? '+' : '-';
+    console.log(
+      `${row.category.padEnd(22)} | ` +
+      `${row.label.padEnd(45)} | ` +
+      `${row.score.toFixed(3).padStart(5)} | ` +
+      `${(marginSign + row.margin.toFixed(3)).padStart(13)} | ` +
+      `${row.verdict}`
+    );
+  }
+  console.log('-------------------------------------------------------------------------------------------------------------');
+
+  // Calculate smallest margins
+  const positiveRows = tableRows.filter((r) => r.expectedVerdict === 'ACCEPTED');
+  const negativeRows = tableRows.filter((r) => r.expectedVerdict === 'REJECTED');
+
+  let minPositiveMargin = Infinity;
+  let minPositiveRow = null;
+  for (const r of positiveRows) {
+    const m = r.score - SWEEP_SIG_MIN_SCORE;
+    if (m < minPositiveMargin) {
+      minPositiveMargin = m;
+      minPositiveRow = r;
+    }
+  }
+
+  let minNegativeMargin = Infinity;
+  let minNegativeRow = null;
+  for (const r of negativeRows) {
+    const m = SWEEP_SIG_MIN_SCORE - r.score;
+    if (m < minNegativeMargin) {
+      minNegativeMargin = m;
+      minNegativeRow = r;
+    }
+  }
+
+  console.log(`\n  [Separation Gap Analysis]:`);
+  console.log(`  - Smallest Positive Margin (above threshold): +${minPositiveMargin.toFixed(3)} (${minPositiveRow.label}, Score=${minPositiveRow.score.toFixed(3)})`);
+  console.log(`  - Smallest Negative Margin (below threshold): -${minNegativeMargin.toFixed(3)} (${minNegativeRow.label}, Score=${minNegativeRow.score.toFixed(3)})`);
+  console.log(`  - Rejection Threshold: ${SWEEP_SIG_MIN_SCORE.toFixed(3)}`);
+  console.log(`  - Clear Separation Gap: ${(minPositiveRow.score - (SWEEP_SIG_MIN_SCORE - minNegativeMargin)).toFixed(3)} score units\n`);
+
+  assert.ok(minPositiveMargin > 0, 'All positive sweep cases must exceed threshold');
+  assert.ok(minNegativeMargin > 0, 'All negative non-sweep cases must fall below threshold');
 });
 
 

@@ -119,3 +119,63 @@ export function formatTimeAgo(timestampMs, now = Date.now()) {
   const diffDays = Math.floor(diffHours / 24);
   return `${diffDays} d ago`;
 }
+
+/**
+ * Escape HTML special characters for safe template insertion.
+ *
+ * @param {string|number|null|undefined} str
+ * @returns {string}
+ */
+export function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Format acoustic analysis diagnostics for display in a collapsed Details section.
+ * Lists PNR, deltaPostPre, ordering score and threshold, sample rate, duration, and which gate fired.
+ *
+ * @param {object|null|undefined} diagnostics
+ * @returns {string} HTML string
+ */
+export function formatDiagnosticsHtml(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return '<p class="text-muted" style="margin: 4px 0;">No diagnostic data available</p>';
+  }
+
+  const pnrVal = diagnostics.pnrDb != null && Number.isFinite(diagnostics.pnrDb)
+    ? `${diagnostics.pnrDb.toFixed(1)} dB (threshold: ≥ ${(diagnostics.pnrThresholdDb ?? 20).toFixed(1)} dB)`
+    : '—';
+
+  const deltaVal = diagnostics.deltaPostPreDb != null && Number.isFinite(diagnostics.deltaPostPreDb)
+    ? `${diagnostics.deltaPostPreDb.toFixed(1)} dB (threshold: ≥ ${(diagnostics.deltaPostPreThresholdDb ?? 1.5).toFixed(1)} dB)`
+    : '—';
+
+  const scoreVal = diagnostics.orderingScore != null && Number.isFinite(diagnostics.orderingScore)
+    ? `${diagnostics.orderingScore.toFixed(3)} (threshold: ≥ ${(diagnostics.orderingThreshold ?? 0.65).toFixed(3)})`
+    : '—';
+
+  const srVal = diagnostics.sampleRate ? `${diagnostics.sampleRate} Hz` : '—';
+  const durVal = diagnostics.durationS != null && Number.isFinite(diagnostics.durationS)
+    ? `${diagnostics.durationS.toFixed(2)} s`
+    : '—';
+
+  const gateVal = diagnostics.gateFired || 'None';
+
+  return `
+<table class="diagnostics-table" style="width:100%; border-collapse:collapse; font-size:0.85em; font-family:monospace; margin-top:4px;">
+  <tbody>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8); width:35%;">Gate fired:</td><td style="padding:3px 6px; font-weight:600;">${escapeHtml(gateVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">PNR:</td><td style="padding:3px 6px;">${escapeHtml(pnrVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">deltaPostPre:</td><td style="padding:3px 6px;">${escapeHtml(deltaVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Ordering score:</td><td style="padding:3px 6px;">${escapeHtml(scoreVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Sample rate:</td><td style="padding:3px 6px;">${escapeHtml(srVal)}</td></tr>
+    <tr><td style="padding:3px 6px; color:var(--text-muted, #94a3b8);">Duration:</td><td style="padding:3px 6px;">${escapeHtml(durVal)}</td></tr>
+  </tbody>
+</table>`.trim();
+}

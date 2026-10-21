@@ -357,6 +357,10 @@
               Analyze anyway (low confidence)
             </button>
           </div>
+          <details id="reject-details" class="analyze-details" style="margin-top: 12px; border-top: 1px solid var(--border-color, #334155); padding-top: 8px;">
+            <summary style="cursor: pointer; font-size: 0.85em; font-weight: 600; color: var(--text-muted, #94a3b8);">Details</summary>
+            <div id="reject-details-content" class="details-content" style="margin-top: 8px;"></div>
+          </details>
         </div>
 
         <!-- Analysis Results Container -->
@@ -429,6 +433,12 @@
             </button>
             <span id="attach-success-msg" class="attach-success-msg" hidden>✓ Attached!</span>
           </div>
+
+          <!-- Diagnostics Collapsed Section -->
+          <details id="results-details" class="analyze-details" style="margin-top: 16px; border-top: 1px solid var(--border-color, #334155); padding-top: 12px;">
+            <summary style="cursor: pointer; font-size: 0.85em; font-weight: 600; color: var(--text-muted, #94a3b8);">Details</summary>
+            <div id="results-details-content" class="details-content" style="margin-top: 8px;"></div>
+          </details>
         </div>
       </section>
 

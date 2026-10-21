@@ -45,7 +45,7 @@ import { loadAudioFile } from '../audio/wav.js';
 import { downloadSweepWav } from '../audio/sweep-wav.js';
 import { runSelfTest } from '../analysis/selftest.js';
 import { interpolateUncertainty } from '../analysis/uncertainty.js';
-import { formatDecibels, formatAudioErrorMessage, formatTimeAgo } from './format.js';
+import { formatDecibels, formatAudioErrorMessage, formatTimeAgo, formatDiagnosticsHtml } from './format.js';
 import { HELP_TOPICS } from './help.js';
 import {
   aggregateSessionBands,
@@ -161,9 +161,11 @@ export async function initApp() {
   const analyzeRejectCard = document.getElementById('analyze-reject-card');
   const analyzeRejectReason = document.getElementById('analyze-reject-reason');
   const analyzeRejectAdvice = document.getElementById('analyze-reject-advice');
+  const rejectDetailsContent = document.getElementById('reject-details-content');
   const analyzeOverrideRow = document.getElementById('analyze-override-row');
   const btnOverrideLowPnr = document.getElementById('btn-override-low-pnr');
   const analyzeResultsContainer = document.getElementById('analyze-results-container');
+  const resultsDetailsContent = document.getElementById('results-details-content');
   const badgeSimulated = document.getElementById('badge-simulated');
   const badgeClipped = document.getElementById('badge-clipped');
   const badgeTruncated = document.getElementById('badge-truncated');
@@ -1535,6 +1537,20 @@ export async function initApp() {
       if (analyzeOverrideRow) {
         analyzeOverrideRow.hidden = !result.canOverrideLowPnr;
       }
+      if (rejectDetailsContent) {
+        const diagData = result.diagnostics || {
+          pnrDb: result.pnrDb,
+          pnrThresholdDb: 20.0,
+          deltaPostPreDb: result.deltaPostPreDb,
+          deltaPostPreThresholdDb: 1.5,
+          orderingScore: result.sweepSignature ? result.sweepSignature.score : null,
+          orderingThreshold: 0.65,
+          sampleRate: audioMeta.sampleRate || result.sampleRate,
+          durationS: audioMeta.durationS || (audioMeta.samples ? audioMeta.samples.length / (audioMeta.sampleRate || 48000) : result.durationS),
+          gateFired: result.gateFired || result.rejectReason || 'Rejection gate',
+        };
+        rejectDetailsContent.innerHTML = formatDiagnosticsHtml(diagData);
+      }
       if (analyzeResultsContainer) analyzeResultsContainer.hidden = true;
       if (analysisLiveAnnouncer) {
         analysisLiveAnnouncer.textContent = `Analysis rejected: ${result.rejectReason || 'Check audio recording.'}`;
@@ -1544,6 +1560,20 @@ export async function initApp() {
 
     if (analyzeRejectCard) analyzeRejectCard.hidden = true;
     if (analyzeResultsContainer) analyzeResultsContainer.hidden = false;
+    if (resultsDetailsContent) {
+      const diagData = result.diagnostics || {
+        pnrDb: result.pnrDb,
+        pnrThresholdDb: 20.0,
+        deltaPostPreDb: result.deltaPostPreDb,
+        deltaPostPreThresholdDb: 1.5,
+        orderingScore: result.sweepSignature ? result.sweepSignature.score : null,
+        orderingThreshold: 0.65,
+        sampleRate: audioMeta.sampleRate || result.sampleRate,
+        durationS: audioMeta.durationS || (audioMeta.samples ? audioMeta.samples.length / (audioMeta.sampleRate || 48000) : result.durationS),
+        gateFired: result.gateFired || 'None (All gates passed)',
+      };
+      resultsDetailsContent.innerHTML = formatDiagnosticsHtml(diagData);
+    }
     if (analysisLiveAnnouncer) {
       analysisLiveAnnouncer.textContent = `Analysis complete: PNR ${formatDecibels(result.pnrDb, 1)}, usable decay depth ${formatDecibels(result.dynamicRangeDb, 1)}.`;
     }

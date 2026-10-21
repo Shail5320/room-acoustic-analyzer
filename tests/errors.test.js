@@ -4,6 +4,7 @@ import {
   formatDecibels,
   formatAudioErrorMessage,
   formatTimeAgo,
+  formatDiagnosticsHtml,
 } from '../src/ui/format.js';
 import { StorageService, MemoryStorageAdapter } from '../src/store/storage.js';
 
@@ -105,4 +106,47 @@ test('Storage - Quota exceeded error triggers graceful fallback to memory adapte
   // Subsequent gets and saves should work via memory adapter
   const retrieved = await storage.get('test_session');
   assert.equal(retrieved.id, 'test_session');
+});
+
+test('Diagnostics Formatting - formatDiagnosticsHtml outputs collapsed details content', () => {
+  // 1. Accepted recording diagnostics
+  const validHtml = formatDiagnosticsHtml({
+    pnrDb: 28.5,
+    pnrThresholdDb: 20.0,
+    deltaPostPreDb: 6.2,
+    deltaPostPreThresholdDb: 1.5,
+    orderingScore: 0.948,
+    orderingThreshold: 0.65,
+    sampleRate: 48000,
+    durationS: 8.50,
+    gateFired: 'None (All gates passed)',
+  });
+
+  assert.match(validHtml, /Gate fired:.*None \(All gates passed\)/);
+  assert.match(validHtml, /PNR:.*28\.5 dB \(threshold: ≥ 20\.0 dB\)/);
+  assert.match(validHtml, /deltaPostPre:.*6\.2 dB \(threshold: ≥ 1\.5 dB\)/);
+  assert.match(validHtml, /Ordering score:.*0\.948 \(threshold: ≥ 0\.650\)/);
+  assert.match(validHtml, /Sample rate:.*48000 Hz/);
+  assert.match(validHtml, /Duration:.*8\.50 s/);
+
+  // 2. Rejected recording diagnostics (e.g. clap)
+  const rejectedHtml = formatDiagnosticsHtml({
+    pnrDb: 19.8,
+    pnrThresholdDb: 20.0,
+    deltaPostPreDb: 9.1,
+    deltaPostPreThresholdDb: 1.5,
+    orderingScore: 0.0,
+    orderingThreshold: 0.65,
+    sampleRate: 48000,
+    durationS: 8.50,
+    gateFired: 'Sweep signature gate',
+  });
+
+  assert.match(rejectedHtml, /Gate fired:.*Sweep signature gate/);
+  assert.match(rejectedHtml, /PNR:.*19\.8 dB/);
+  assert.match(rejectedHtml, /deltaPostPre:.*9\.1 dB/);
+  assert.match(rejectedHtml, /Ordering score:.*0\.000/);
+
+  // 3. Fallback on missing data
+  assert.match(formatDiagnosticsHtml(null), /No diagnostic data available/);
 });

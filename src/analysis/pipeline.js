@@ -346,6 +346,21 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      sampleRate: sampleRate || null,
+      durationS: 0,
+      deltaPostPreDb: null,
+      gateFired: 'Sample length gate',
+      diagnostics: {
+        pnrDb: null,
+        pnrThresholdDb: PNR_THRESHOLD_DB,
+        deltaPostPreDb: null,
+        deltaPostPreThresholdDb: LOW_PNR_POST_PRE_MARGIN_DB,
+        orderingScore: null,
+        orderingThreshold: SWEEP_SIG_MIN_SCORE,
+        sampleRate: sampleRate || null,
+        durationS: 0,
+        gateFired: 'Sample length gate',
+      },
       timingsMs,
     };
   }
@@ -353,6 +368,7 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
   const signal = new Float64Array(samples);
 
   if (typeof sampleRate !== 'number' || sampleRate < MIN_SAMPLE_RATE) {
+    const dur = sampleRate ? Math.round((signal.length / sampleRate) * 100) / 100 : 0;
     return {
       ok: false,
       rejectReason: `Sample rate too low (${sampleRate || 0} Hz < ${MIN_SAMPLE_RATE} Hz)`,
@@ -367,6 +383,21 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      sampleRate: sampleRate || 0,
+      durationS: dur,
+      deltaPostPreDb: null,
+      gateFired: 'Sample rate gate',
+      diagnostics: {
+        pnrDb: null,
+        pnrThresholdDb: PNR_THRESHOLD_DB,
+        deltaPostPreDb: null,
+        deltaPostPreThresholdDb: LOW_PNR_POST_PRE_MARGIN_DB,
+        orderingScore: null,
+        orderingThreshold: SWEEP_SIG_MIN_SCORE,
+        sampleRate: sampleRate || 0,
+        durationS: dur,
+        gateFired: 'Sample rate gate',
+      },
       timingsMs,
     };
   }
@@ -390,6 +421,21 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      sampleRate,
+      durationS: Math.round(durationS * 100) / 100,
+      deltaPostPreDb: null,
+      gateFired: 'Duration gate (too short)',
+      diagnostics: {
+        pnrDb: null,
+        pnrThresholdDb: options.pnrThresholdDb || PNR_THRESHOLD_DB,
+        deltaPostPreDb: null,
+        deltaPostPreThresholdDb: options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB,
+        orderingScore: null,
+        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
+        sampleRate,
+        durationS: Math.round(durationS * 100) / 100,
+        gateFired: 'Duration gate (too short)',
+      },
       timingsMs,
     };
   }
@@ -409,6 +455,21 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      sampleRate,
+      durationS: Math.round(durationS * 100) / 100,
+      deltaPostPreDb: null,
+      gateFired: 'Duration gate (too long)',
+      diagnostics: {
+        pnrDb: null,
+        pnrThresholdDb: options.pnrThresholdDb || PNR_THRESHOLD_DB,
+        deltaPostPreDb: null,
+        deltaPostPreThresholdDb: options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB,
+        orderingScore: null,
+        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
+        sampleRate,
+        durationS: Math.round(durationS * 100) / 100,
+        gateFired: 'Duration gate (too long)',
+      },
       timingsMs,
     };
   }
@@ -437,6 +498,21 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       irPlot: null,
       edcPlot: null,
       bands: null,
+      sampleRate,
+      durationS: Math.round(durationS * 100) / 100,
+      deltaPostPreDb: null,
+      gateFired: 'Silence gate',
+      diagnostics: {
+        pnrDb: null,
+        pnrThresholdDb: options.pnrThresholdDb || PNR_THRESHOLD_DB,
+        deltaPostPreDb: null,
+        deltaPostPreThresholdDb: options.lowPnrPostPreMarginDb ?? LOW_PNR_POST_PRE_MARGIN_DB,
+        orderingScore: null,
+        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
+        sampleRate,
+        durationS: Math.round(durationS * 100) / 100,
+        gateFired: 'Silence gate',
+      },
       timingsMs,
     };
   }
@@ -531,6 +607,21 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
       edcPlot: null,
       bands: null,
       sweepSignature: sweepSig,
+      sampleRate,
+      durationS: Math.round(durationS * 100) / 100,
+      deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
+      gateFired: 'Sweep signature gate',
+      diagnostics: {
+        pnrDb: roundedPnrDb,
+        pnrThresholdDb: pnrThreshold,
+        deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
+        deltaPostPreThresholdDb: lowPnrMargin,
+        orderingScore: sweepSig.score,
+        orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
+        sampleRate,
+        durationS: Math.round(durationS * 100) / 100,
+        gateFired: 'Sweep signature gate',
+      },
       timingsMs: {
         ...timingsMs,
         totalMs: performance.now() - startTime,
@@ -564,6 +655,21 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
         edcPlot: null,
         bands: null,
         sweepSignature: sweepSig,
+        sampleRate,
+        durationS: Math.round(durationS * 100) / 100,
+        deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
+        gateFired: 'PNR gate',
+        diagnostics: {
+          pnrDb: roundedPnrDb,
+          pnrThresholdDb: pnrThreshold,
+          deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
+          deltaPostPreThresholdDb: lowPnrMargin,
+          orderingScore: sweepSig.score,
+          orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
+          sampleRate,
+          durationS: Math.round(durationS * 100) / 100,
+          gateFired: 'PNR gate',
+        },
         timingsMs: {
           ...timingsMs,
           totalMs: performance.now() - startTime,
@@ -690,6 +796,20 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
   timingsMs.totalMs = performance.now() - startTime;
   reportProgress('done', 1.0, 'Analysis complete.');
 
+  const roundedPnr = Math.round(pnrDb * 10) / 10;
+  const gateFired = lowConfidence ? 'PNR gate (overridden)' : 'None (All gates passed)';
+  const diagnostics = {
+    pnrDb: roundedPnr,
+    pnrThresholdDb: pnrThreshold,
+    deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
+    deltaPostPreThresholdDb: lowPnrMargin,
+    orderingScore: sweepSig.score,
+    orderingThreshold: options.sigMinScore ?? SWEEP_SIG_MIN_SCORE,
+    sampleRate,
+    durationS: Math.round(durationS * 100) / 100,
+    gateFired,
+  };
+
   return {
     ok: true,
     rejectReason: null,
@@ -697,7 +817,7 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
     decayTruncated,
     canOverrideLowPnr,
     lowConfidence,
-    pnrDb: Math.round(pnrDb * 10) / 10,
+    pnrDb: roundedPnr,
     dynamicRangeDb: minDr,
     weakestBandHz,
     clipped,
@@ -705,6 +825,11 @@ export function analyzeRecording({ samples, sampleRate, onProgress = null, optio
     edcPlot,
     bands,
     sweepSignature: sweepSig,
+    sampleRate,
+    durationS: Math.round(durationS * 100) / 100,
+    deltaPostPreDb: Number.isFinite(deltaPostPreDb) ? Math.round(deltaPostPreDb * 10) / 10 : null,
+    gateFired,
+    diagnostics,
     timingsMs,
   };
 }
